@@ -1,0 +1,9 @@
+.env
+*.db
+*.log
+__pycache__/
+*.pyc
+*.zip
+venv/
+nssm/
+logs/
