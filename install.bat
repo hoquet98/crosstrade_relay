@@ -1,9 +1,24 @@
 @echo off
 setlocal enabledelayedexpansion
 
+:: ---- Configuration ----
+set "REPO_URL=https://github.com/hoquet98/crosstrade_relay/archive/refs/heads/main.zip"
+set "INSTALL_DIR=C:\TradeRelay"
+set "PYTHON_URL=https://www.python.org/ftp/python/3.12.12/python-3.12.12-amd64.exe"
+set "SERVICE_NAME=TradeRelay"
+set "SERVICE_PORT=8080"
+set "LOG_FILE=%INSTALL_DIR%\install.log"
+
+:: Create install dir early so we can log
+mkdir "%INSTALL_DIR%" 2>nul
+
+echo ============================================>> "%LOG_FILE%"
+echo   Trade Relay Install - %date% %time%>> "%LOG_FILE%"
+echo ============================================>> "%LOG_FILE%"
+
 echo ============================================
 echo   Trade Relay - One-Click Installer
-echo   Run as Administrator!
+echo   Run as Administrator
 echo ============================================
 echo.
 
@@ -15,172 +30,172 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-echo [OK] Running as Administrator
+call :log "[OK] Running as Administrator"
 echo.
 
-:: ---- Configuration ----
-set "REPO_URL=https://github.com/hoquet98/crosstrade_relay/archive/refs/heads/main.zip"
-set "INSTALL_DIR=C:\TradeRelay"
-set "PYTHON_URL=https://www.python.org/ftp/python/3.12.12/python-3.12.12-amd64.exe"
-set "SERVICE_NAME=TradeRelay"
-set "SERVICE_PORT=8080"
-
 :: ---- Download and extract project files ----
-if not exist "%INSTALL_DIR%\relay.py" (
-    echo Downloading Trade Relay from GitHub...
-    mkdir "%INSTALL_DIR%" 2>nul
+if exist "%INSTALL_DIR%\relay.py" goto :skip_download
 
-    powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%REPO_URL%' -OutFile '%INSTALL_DIR%\repo.zip' -UseBasicParsing } catch { exit 1 }"
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to download project files from GitHub.
-        pause
-        exit /b 1
-    )
-
-    echo Extracting files...
-    powershell -Command "try { Expand-Archive -Path '%INSTALL_DIR%\repo.zip' -DestinationPath '%INSTALL_DIR%\temp' -Force } catch { exit 1 }"
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to extract project files.
-        pause
-        exit /b 1
-    )
-
-    :: Move files from the nested folder (GitHub zips have a subfolder)
-    powershell -Command "Get-ChildItem '%INSTALL_DIR%\temp\crosstrade_relay-main\*' | Move-Item -Destination '%INSTALL_DIR%\' -Force"
-
-    :: Clean up
-    rmdir /s /q "%INSTALL_DIR%\temp" 2>nul
-    del "%INSTALL_DIR%\repo.zip" 2>nul
-    echo [OK] Project files downloaded to %INSTALL_DIR%
-) else (
-    echo [OK] Project files already present at %INSTALL_DIR%
+call :log "Downloading Trade Relay from GitHub..."
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%REPO_URL%' -OutFile '%INSTALL_DIR%\repo.zip' -UseBasicParsing"
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Failed to download project files from GitHub."
+    pause
+    exit /b 1
 )
+
+call :log "Extracting files..."
+powershell -Command "Expand-Archive -Path '%INSTALL_DIR%\repo.zip' -DestinationPath '%INSTALL_DIR%\temp' -Force"
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Failed to extract project files."
+    pause
+    exit /b 1
+)
+
+powershell -Command "Get-ChildItem '%INSTALL_DIR%\temp\crosstrade_relay-main\*' | Move-Item -Destination '%INSTALL_DIR%\' -Force"
+rmdir /s /q "%INSTALL_DIR%\temp" 2>nul
+del "%INSTALL_DIR%\repo.zip" 2>nul
+call :log "[OK] Project files downloaded to %INSTALL_DIR%"
+goto :done_download
+
+:skip_download
+call :log "[OK] Project files already present at %INSTALL_DIR%"
+
+:done_download
 echo.
 
 :: ---- Check for Python, install if missing ----
 python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Python not found — downloading and installing...
-    set "PYTHON_INSTALLER=%INSTALL_DIR%\python-installer.exe"
+if !errorlevel! equ 0 goto :skip_python
 
-    powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!PYTHON_URL!' -OutFile '!PYTHON_INSTALLER!' -UseBasicParsing } catch { exit 1 }"
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to download Python installer.
-        echo Download manually from https://www.python.org/downloads/
-        pause
-        exit /b 1
-    )
-
-    echo Installing Python 3.12 (this may take a minute)...
-    "!PYTHON_INSTALLER!" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
-    if %errorlevel% neq 0 (
-        echo [ERROR] Python installation failed.
-        del "!PYTHON_INSTALLER!" 2>nul
-        pause
-        exit /b 1
-    )
-
-    del "!PYTHON_INSTALLER!" 2>nul
-    echo [OK] Python installed
-
-    :: Refresh PATH so python is available in this session
-    for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "PATH=%%B;%PATH%"
-    for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "PATH=%%B;%PATH%"
-
-    python --version >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [ERROR] Python installed but not found in PATH. Please restart this script.
-        pause
-        exit /b 1
-    )
-)
-echo [OK] Python found
-python --version
-echo.
-
-:: ---- Create virtual environment ----
-if not exist "%INSTALL_DIR%\venv" (
-    echo Creating virtual environment...
-    python -m venv "%INSTALL_DIR%\venv"
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to create virtual environment.
-        pause
-        exit /b 1
-    )
-    echo [OK] Virtual environment created
-) else (
-    echo [OK] Virtual environment already exists
-)
-echo.
-
-:: ---- Install dependencies into venv ----
-echo Installing dependencies...
-"%INSTALL_DIR%\venv\Scripts\pip.exe" install -r "%INSTALL_DIR%\requirements.txt"
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to install dependencies.
+call :log "Python not found - downloading and installing..."
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%INSTALL_DIR%\python-installer.exe' -UseBasicParsing"
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Failed to download Python installer."
+    call :log "Download manually from https://www.python.org/downloads/"
     pause
     exit /b 1
 )
-echo [OK] Dependencies installed
+
+call :log "Installing Python 3.12 (this may take a minute)..."
+"%INSTALL_DIR%\python-installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Python installation failed."
+    del "%INSTALL_DIR%\python-installer.exe" 2>nul
+    pause
+    exit /b 1
+)
+
+del "%INSTALL_DIR%\python-installer.exe" 2>nul
+call :log "[OK] Python installed"
+
+:: Refresh PATH so python is available in this session
+for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "PATH=%%B;%PATH%"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "PATH=%%B;%PATH%"
+
+python --version >nul 2>&1
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Python installed but not found in PATH. Please restart this script."
+    pause
+    exit /b 1
+)
+
+:skip_python
+for /f "tokens=*" %%V in ('python --version 2^>^&1') do call :log "[OK] %%V"
+echo.
+
+:: ---- Create virtual environment ----
+if exist "%INSTALL_DIR%\venv" goto :skip_venv
+
+call :log "Creating virtual environment..."
+python -m venv "%INSTALL_DIR%\venv"
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Failed to create virtual environment."
+    pause
+    exit /b 1
+)
+call :log "[OK] Virtual environment created"
+goto :done_venv
+
+:skip_venv
+call :log "[OK] Virtual environment already exists"
+
+:done_venv
+echo.
+
+:: ---- Install dependencies into venv ----
+call :log "Installing dependencies..."
+"%INSTALL_DIR%\venv\Scripts\pip.exe" install -r "%INSTALL_DIR%\requirements.txt"
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Failed to install dependencies."
+    pause
+    exit /b 1
+)
+call :log "[OK] Dependencies installed"
 echo.
 
 :: ---- Initialize database ----
-echo Initializing database...
+call :log "Initializing database..."
 "%INSTALL_DIR%\venv\Scripts\python.exe" -c "import sys; sys.path.insert(0, r'%INSTALL_DIR%'); import database; database.init_db(); print('[OK] Database initialized')"
+call :log "[OK] Database initialized"
 echo.
 
 :: ---- Download NSSM if not present ----
 set "NSSM_DIR=%INSTALL_DIR%\nssm"
 set "NSSM_EXE=%NSSM_DIR%\nssm.exe"
 
-if not exist "%NSSM_EXE%" (
-    echo Downloading NSSM (Windows Service Manager)...
-    mkdir "%NSSM_DIR%" 2>nul
+if exist "%NSSM_EXE%" goto :skip_nssm
 
-    powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://nssm.cc/release/nssm-2.24.zip' -OutFile '%NSSM_DIR%\nssm.zip' -UseBasicParsing } catch { exit 1 }"
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to download NSSM.
-        echo You can manually download from https://nssm.cc/download
-        echo Extract nssm.exe to: %NSSM_DIR%\
-        pause
-        exit /b 1
-    )
+call :log "Downloading NSSM (Windows Service Manager)..."
+mkdir "%NSSM_DIR%" 2>nul
 
-    :: Extract the 64-bit exe from the zip
-    powershell -Command "try { Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead('%NSSM_DIR%\nssm.zip'); $entry = $zip.Entries | Where-Object { $_.FullName -like '*/win64/nssm.exe' }; if ($entry) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, '%NSSM_EXE%', $true) }; $zip.Dispose() } catch { exit 1 }"
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to extract NSSM.
-        pause
-        exit /b 1
-    )
-
-    del "%NSSM_DIR%\nssm.zip" 2>nul
-    echo [OK] NSSM downloaded
-) else (
-    echo [OK] NSSM already present
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://nssm.cc/release/nssm-2.24.zip' -OutFile '%NSSM_DIR%\nssm.zip' -UseBasicParsing"
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Failed to download NSSM."
+    call :log "You can manually download from https://nssm.cc/download"
+    pause
+    exit /b 1
 )
+
+powershell -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead('%NSSM_DIR%\nssm.zip'); $entry = $zip.Entries | Where-Object { $_.FullName -like '*/win64/nssm.exe' }; [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, '%NSSM_EXE%', $true); $zip.Dispose()"
+if !errorlevel! neq 0 (
+    call :log "[ERROR] Failed to extract NSSM."
+    pause
+    exit /b 1
+)
+
+del "%NSSM_DIR%\nssm.zip" 2>nul
+call :log "[OK] NSSM downloaded"
+goto :done_nssm
+
+:skip_nssm
+call :log "[OK] NSSM already present"
+
+:done_nssm
 echo.
 
 :: ---- Stop existing service if running ----
 "%NSSM_EXE%" status %SERVICE_NAME% >nul 2>&1
-if %errorlevel% equ 0 (
-    echo Stopping existing %SERVICE_NAME% service...
-    "%NSSM_EXE%" stop %SERVICE_NAME% >nul 2>&1
-    timeout /t 3 /nobreak >nul
-    echo Removing existing service...
-    "%NSSM_EXE%" remove %SERVICE_NAME% confirm >nul 2>&1
-    timeout /t 2 /nobreak >nul
-    echo [OK] Old service removed
-    echo.
-)
+if !errorlevel! neq 0 goto :skip_stop_service
+
+call :log "Stopping existing %SERVICE_NAME% service..."
+"%NSSM_EXE%" stop %SERVICE_NAME% >nul 2>&1
+timeout /t 3 /nobreak >nul
+call :log "Removing existing service..."
+"%NSSM_EXE%" remove %SERVICE_NAME% confirm >nul 2>&1
+timeout /t 2 /nobreak >nul
+call :log "[OK] Old service removed"
+
+:skip_stop_service
+echo.
 
 :: ---- Install Windows service via NSSM ----
-echo Installing %SERVICE_NAME% as a Windows service...
+call :log "Installing %SERVICE_NAME% as a Windows service..."
 
 "%NSSM_EXE%" install %SERVICE_NAME% "%INSTALL_DIR%\venv\Scripts\python.exe"
 "%NSSM_EXE%" set %SERVICE_NAME% AppParameters "relay.py"
 "%NSSM_EXE%" set %SERVICE_NAME% AppDirectory "%INSTALL_DIR%"
-"%NSSM_EXE%" set %SERVICE_NAME% Description "Trade Relay — TradingView to CrossTrade webhook relay"
+"%NSSM_EXE%" set %SERVICE_NAME% Description "Trade Relay - TradingView to CrossTrade webhook relay"
 "%NSSM_EXE%" set %SERVICE_NAME% Start SERVICE_AUTO_START
 "%NSSM_EXE%" set %SERVICE_NAME% AppExit Default Restart
 "%NSSM_EXE%" set %SERVICE_NAME% AppRestartDelay 5000
@@ -193,34 +208,30 @@ mkdir "%LOG_DIR%" 2>nul
 "%NSSM_EXE%" set %SERVICE_NAME% AppStdoutCreationDisposition 4
 "%NSSM_EXE%" set %SERVICE_NAME% AppStderrCreationDisposition 4
 
-echo [OK] Service installed (auto-start on boot, auto-restart on crash)
+call :log "[OK] Service installed (auto-start on boot, auto-restart on crash)"
 echo.
 
 :: ---- Open firewall port ----
-echo Configuring firewall...
-netsh advfirewall firewall show rule name="%SERVICE_NAME%" >nul 2>&1
-if %errorlevel% equ 0 (
-    netsh advfirewall firewall delete rule name="%SERVICE_NAME%" >nul 2>&1
-)
+call :log "Configuring firewall..."
+netsh advfirewall firewall delete rule name="%SERVICE_NAME%" >nul 2>&1
 netsh advfirewall firewall add rule name="%SERVICE_NAME%" dir=in action=allow protocol=tcp localport=%SERVICE_PORT% >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [OK] Firewall rule added (port %SERVICE_PORT% inbound)
+if !errorlevel! equ 0 (
+    call :log "[OK] Firewall rule added (port %SERVICE_PORT% inbound)"
 ) else (
-    echo [WARN] Could not add firewall rule — you may need to open port %SERVICE_PORT% manually
+    call :log "[WARN] Could not add firewall rule - you may need to open port %SERVICE_PORT% manually"
 )
 echo.
 
 :: ---- Start the service ----
-echo Starting %SERVICE_NAME% service...
+call :log "Starting %SERVICE_NAME% service..."
 "%NSSM_EXE%" start %SERVICE_NAME%
 timeout /t 3 /nobreak >nul
 
-:: Verify it's running
 "%NSSM_EXE%" status %SERVICE_NAME% | findstr /i "running" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [OK] %SERVICE_NAME% service is running!
+if !errorlevel! equ 0 (
+    call :log "[OK] %SERVICE_NAME% service is running"
 ) else (
-    echo [WARN] Service may not have started. Check logs at: %LOG_DIR%\
+    call :log "[WARN] Service may not have started. Check logs at: %LOG_DIR%\"
 )
 echo.
 
@@ -232,8 +243,9 @@ echo   Installed to: %INSTALL_DIR%
 echo   Service:      %SERVICE_NAME% (auto-starts on boot)
 echo   Port:         %SERVICE_PORT%
 echo   Logs:         %LOG_DIR%\
+echo   Install log:  %LOG_FILE%
 echo.
-echo   Next step — add your user config:
+echo   Next step - add your user config:
 echo     cd /d %INSTALL_DIR%
 echo     venv\Scripts\python.exe manage.py add-user
 echo.
@@ -243,4 +255,12 @@ echo     %NSSM_EXE% stop %SERVICE_NAME%
 echo     %NSSM_EXE% start %SERVICE_NAME%
 echo     %NSSM_EXE% restart %SERVICE_NAME%
 echo ============================================
+call :log "Installation complete"
 pause
+exit /b 0
+
+:: ---- Logging helper ----
+:log
+echo %~1
+echo [%date% %time%] %~1 >> "%LOG_FILE%"
+goto :eof
