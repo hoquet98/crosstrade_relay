@@ -97,6 +97,15 @@ def delete_user(relay_user: str):
     conn.close()
 
 
+def get_user_by_key(crosstrade_key: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM users WHERE crosstrade_key = ?", (crosstrade_key,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def list_users() -> list[dict]:
     conn = get_connection()
     rows = conn.execute("SELECT * FROM users").fetchall()

@@ -1,7 +1,8 @@
 import logging
 import httpx
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from contextlib import asynccontextmanager
 
 import database as db
@@ -323,6 +324,20 @@ async def process_signal(fields: dict, raw_payload: str = None) -> dict:
         return {"result": result, "details": details}
 
 
+# --- Authentication ---
+
+bearer_scheme = HTTPBearer()
+
+
+async def verify_bearer(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> dict:
+    """Validate Bearer token against registered users' CrossTrade keys."""
+    token = credentials.credentials
+    user = db.get_user_by_key(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return user
+
+
 # --- Routes ---
 
 @app.post("/webhook")
@@ -345,19 +360,19 @@ async def health():
 
 
 @app.get("/positions")
-async def positions(relay_user: str = None):
+async def positions(relay_user: str = None, _user: dict = Depends(verify_bearer)):
     """View current position ownership."""
     return db.list_positions(relay_user)
 
 
 @app.get("/logs")
-async def logs(relay_user: str = None, limit: int = 100):
+async def logs(relay_user: str = None, limit: int = 100, _user: dict = Depends(verify_bearer)):
     """View signal logs."""
     return db.get_logs(relay_user, limit)
 
 
 @app.get("/users")
-async def users():
+async def users(_user: dict = Depends(verify_bearer)):
     """List configured users (keys are masked)."""
     all_users = db.list_users()
     for u in all_users:
@@ -368,7 +383,7 @@ async def users():
 # --- User management routes ---
 
 @app.post("/users")
-async def create_user(request: Request):
+async def create_user(request: Request, _user: dict = Depends(verify_bearer)):
     """Add or update a user."""
     data = await request.json()
     required = ["relay_user", "crosstrade_key", "ct_webhook_url"]
@@ -381,7 +396,7 @@ async def create_user(request: Request):
 
 
 @app.delete("/users/{relay_user}")
-async def remove_user(relay_user: str):
+async def remove_user(relay_user: str, _user: dict = Depends(verify_bearer)):
     """Remove a user."""
     db.delete_user(relay_user)
     logger.info(f"User deleted: {relay_user}")
@@ -389,7 +404,7 @@ async def remove_user(relay_user: str):
 
 
 @app.post("/positions/clear")
-async def clear_position(request: Request):
+async def clear_position(request: Request, _user: dict = Depends(verify_bearer)):
     """Manually clear position ownership (emergency reset)."""
     data = await request.json()
     required = ["relay_user", "account", "instrument"]
