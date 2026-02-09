@@ -38,25 +38,27 @@ if exist "%INSTALL_DIR%\relay.py" goto :skip_download
 
 call :log "Downloading Trade Relay from GitHub..."
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%REPO_URL%' -OutFile '%INSTALL_DIR%\repo.zip' -UseBasicParsing"
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Failed to download project files from GitHub."
-    pause
-    exit /b 1
-)
+if not exist "%INSTALL_DIR%\repo.zip" goto :download_failed
 
 call :log "Extracting files..."
 powershell -Command "Expand-Archive -Path '%INSTALL_DIR%\repo.zip' -DestinationPath '%INSTALL_DIR%\temp' -Force"
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Failed to extract project files."
-    pause
-    exit /b 1
-)
-
 powershell -Command "Get-ChildItem '%INSTALL_DIR%\temp\crosstrade_relay-main\*' | Move-Item -Destination '%INSTALL_DIR%\' -Force"
 rmdir /s /q "%INSTALL_DIR%\temp" 2>nul
 del "%INSTALL_DIR%\repo.zip" 2>nul
+
+if not exist "%INSTALL_DIR%\relay.py" goto :extract_failed
 call :log "[OK] Project files downloaded to %INSTALL_DIR%"
 goto :done_download
+
+:download_failed
+call :log "[ERROR] Failed to download project files from GitHub."
+pause
+exit /b 1
+
+:extract_failed
+call :log "[ERROR] Failed to extract project files."
+pause
+exit /b 1
 
 :skip_download
 call :log "[OK] Project files already present at %INSTALL_DIR%"
@@ -68,54 +70,52 @@ echo.
 python --version >nul 2>&1
 if !errorlevel! equ 0 goto :skip_python
 
-call :log "Python not found - downloading and installing..."
+call :log "Python not found - downloading installer..."
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%INSTALL_DIR%\python-installer.exe' -UseBasicParsing"
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Failed to download Python installer."
-    call :log "Download manually from https://www.python.org/downloads/"
-    pause
-    exit /b 1
-)
+if not exist "%INSTALL_DIR%\python-installer.exe" goto :python_download_failed
 
 call :log "Installing Python 3.12 (this may take a minute)..."
 "%INSTALL_DIR%\python-installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Python installation failed."
-    del "%INSTALL_DIR%\python-installer.exe" 2>nul
-    pause
-    exit /b 1
-)
-
 del "%INSTALL_DIR%\python-installer.exe" 2>nul
-call :log "[OK] Python installed"
 
 :: Refresh PATH so python is available in this session
 for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "PATH=%%B;%PATH%"
 for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "PATH=%%B;%PATH%"
 
 python --version >nul 2>&1
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Python installed but not found in PATH. Please restart this script."
-    pause
-    exit /b 1
-)
+if !errorlevel! neq 0 goto :python_path_failed
+
+call :log "[OK] Python installed"
+goto :skip_python
+
+:python_download_failed
+call :log "[ERROR] Failed to download Python installer."
+call :log "Download manually from https://www.python.org/downloads/"
+pause
+exit /b 1
+
+:python_path_failed
+call :log "[ERROR] Python installed but not found in PATH. Please restart this script."
+pause
+exit /b 1
 
 :skip_python
 for /f "tokens=*" %%V in ('python --version 2^>^&1') do call :log "[OK] %%V"
 echo.
 
 :: ---- Create virtual environment ----
-if exist "%INSTALL_DIR%\venv" goto :skip_venv
+if exist "%INSTALL_DIR%\venv\Scripts\python.exe" goto :skip_venv
 
 call :log "Creating virtual environment..."
 python -m venv "%INSTALL_DIR%\venv"
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Failed to create virtual environment."
-    pause
-    exit /b 1
-)
+if not exist "%INSTALL_DIR%\venv\Scripts\python.exe" goto :venv_failed
 call :log "[OK] Virtual environment created"
 goto :done_venv
+
+:venv_failed
+call :log "[ERROR] Failed to create virtual environment."
+pause
+exit /b 1
 
 :skip_venv
 call :log "[OK] Virtual environment already exists"
@@ -126,12 +126,16 @@ echo.
 :: ---- Install dependencies into venv ----
 call :log "Installing dependencies..."
 "%INSTALL_DIR%\venv\Scripts\pip.exe" install -r "%INSTALL_DIR%\requirements.txt"
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Failed to install dependencies."
-    pause
-    exit /b 1
-)
+if !errorlevel! neq 0 goto :deps_failed
 call :log "[OK] Dependencies installed"
+goto :done_deps
+
+:deps_failed
+call :log "[ERROR] Failed to install dependencies."
+pause
+exit /b 1
+
+:done_deps
 echo.
 
 :: ---- Initialize database ----
@@ -150,23 +154,26 @@ call :log "Downloading NSSM (Windows Service Manager)..."
 mkdir "%NSSM_DIR%" 2>nul
 
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://nssm.cc/release/nssm-2.24.zip' -OutFile '%NSSM_DIR%\nssm.zip' -UseBasicParsing"
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Failed to download NSSM."
-    call :log "You can manually download from https://nssm.cc/download"
-    pause
-    exit /b 1
-)
+if not exist "%NSSM_DIR%\nssm.zip" goto :nssm_download_failed
 
+call :log "Extracting NSSM..."
 powershell -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead('%NSSM_DIR%\nssm.zip'); $entry = $zip.Entries | Where-Object { $_.FullName -like '*/win64/nssm.exe' }; [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, '%NSSM_EXE%', $true); $zip.Dispose()"
-if !errorlevel! neq 0 (
-    call :log "[ERROR] Failed to extract NSSM."
-    pause
-    exit /b 1
-)
-
 del "%NSSM_DIR%\nssm.zip" 2>nul
+if not exist "%NSSM_EXE%" goto :nssm_extract_failed
+
 call :log "[OK] NSSM downloaded"
 goto :done_nssm
+
+:nssm_download_failed
+call :log "[ERROR] Failed to download NSSM."
+call :log "You can manually download from https://nssm.cc/download"
+pause
+exit /b 1
+
+:nssm_extract_failed
+call :log "[ERROR] Failed to extract NSSM."
+pause
+exit /b 1
 
 :skip_nssm
 call :log "[OK] NSSM already present"
