@@ -159,7 +159,7 @@ async def check_ct_position(api_key: str, account: str, instrument: str) -> str 
 
 # --- Core relay logic ---
 
-async def process_signal(fields: dict) -> dict:
+async def process_signal(fields: dict, raw_payload: str = None) -> dict:
     """Process an incoming signal and decide whether to forward, block, or drop.
 
     Returns dict with 'result' (forwarded/blocked/dropped/error) and 'details'.
@@ -275,46 +275,51 @@ async def process_signal(fields: dict) -> dict:
         result = "forwarded"
         details = "No market_position fields — forwarding without relay logic"
 
-    # Log the signal
-    db.add_log(
-        relay_user=relay_user,
-        relay_id=relay_id,
-        account=account,
-        instrument=instrument,
-        action=action,
-        market_position=market_position,
-        prev_market_position=prev_market_position,
-        signal_type=signal_type,
-        result=result,
-        details=details
-    )
-
     # Forward to CrossTrade if not blocked/dropped
+    forwarded_payload = None
     if result == "forwarded":
-        payload = build_payload(fields, user["crosstrade_key"])
+        forwarded_payload = build_payload(fields, user["crosstrade_key"])
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
                     user["ct_webhook_url"],
-                    content=payload,
+                    content=forwarded_payload,
                     headers={"Content-Type": "text/plain"}
                 )
             logger.info(f"[{relay_user}/{relay_id}] {signal_type.upper()} → CrossTrade {response.status_code}")
-            return {"result": result, "details": details, "ct_status": response.status_code}
-        except Exception as e:
-            error_msg = f"CrossTrade forward failed: {str(e)}"
-            logger.error(f"[{relay_user}/{relay_id}] {error_msg}")
-            # Update log with error
+
+            # Log the signal with both payloads
             db.add_log(
                 relay_user=relay_user, relay_id=relay_id,
                 account=account, instrument=instrument,
                 action=action, market_position=market_position,
                 prev_market_position=prev_market_position,
-                signal_type=signal_type, result="error", details=error_msg
+                signal_type=signal_type, result=result, details=details,
+                raw_payload=raw_payload, forwarded_payload=forwarded_payload
+            )
+            return {"result": result, "details": details, "ct_status": response.status_code}
+        except Exception as e:
+            error_msg = f"CrossTrade forward failed: {str(e)}"
+            logger.error(f"[{relay_user}/{relay_id}] {error_msg}")
+            db.add_log(
+                relay_user=relay_user, relay_id=relay_id,
+                account=account, instrument=instrument,
+                action=action, market_position=market_position,
+                prev_market_position=prev_market_position,
+                signal_type=signal_type, result="error", details=error_msg,
+                raw_payload=raw_payload, forwarded_payload=forwarded_payload
             )
             return {"result": "error", "details": error_msg}
     else:
         logger.info(f"[{relay_user}/{relay_id}] {signal_type.upper()} → {result.upper()}: {details}")
+        db.add_log(
+            relay_user=relay_user, relay_id=relay_id,
+            account=account, instrument=instrument,
+            action=action, market_position=market_position,
+            prev_market_position=prev_market_position,
+            signal_type=signal_type, result=result, details=details,
+            raw_payload=raw_payload
+        )
         return {"result": result, "details": details}
 
 
@@ -330,7 +335,7 @@ async def webhook(request: Request):
         raise HTTPException(status_code=400, detail="Empty payload")
 
     fields = parse_payload(body_text)
-    result = await process_signal(fields)
+    result = await process_signal(fields, raw_payload=body_text)
     return JSONResponse(content=result)
 
 

@@ -49,9 +49,18 @@ def init_db():
             prev_market_position TEXT,
             signal_type TEXT,
             result TEXT NOT NULL,
-            details TEXT
+            details TEXT,
+            raw_payload TEXT,
+            forwarded_payload TEXT
         );
     """)
+
+    # Migrate existing logs table if columns are missing
+    columns = [row[1] for row in cursor.execute("PRAGMA table_info(logs)").fetchall()]
+    if "raw_payload" not in columns:
+        cursor.execute("ALTER TABLE logs ADD COLUMN raw_payload TEXT")
+    if "forwarded_payload" not in columns:
+        cursor.execute("ALTER TABLE logs ADD COLUMN forwarded_payload TEXT")
 
     conn.commit()
     conn.close()
@@ -148,16 +157,17 @@ def list_positions(relay_user: str = None) -> list[dict]:
 
 def add_log(relay_user: str, relay_id: str, account: str, instrument: str,
             action: str, market_position: str, prev_market_position: str,
-            signal_type: str, result: str, details: str = None):
+            signal_type: str, result: str, details: str = None,
+            raw_payload: str = None, forwarded_payload: str = None):
     conn = get_connection()
     conn.execute("""
         INSERT INTO logs (timestamp, relay_user, relay_id, account, instrument,
                          action, market_position, prev_market_position,
-                         signal_type, result, details)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         signal_type, result, details, raw_payload, forwarded_payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (datetime.now(timezone.utc).isoformat(), relay_user, relay_id,
           account, instrument, action, market_position, prev_market_position,
-          signal_type, result, details))
+          signal_type, result, details, raw_payload, forwarded_payload))
     conn.commit()
     conn.close()
 
