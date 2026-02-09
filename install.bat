@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion
 :: ---- Configuration ----
 set "REPO_URL=https://github.com/hoquet98/crosstrade_relay/archive/refs/heads/main.zip"
 set "INSTALL_DIR=C:\TradeRelay"
-set "PYTHON_URL=https://www.python.org/ftp/python/3.12.12/python-3.12.12-amd64.exe"
+set "PYTHON_URL=https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe"
 set "SERVICE_NAME=TradeRelay"
 set "SERVICE_PORT=8080"
 set "LOG_FILE=%INSTALL_DIR%\install.log"
@@ -67,14 +67,15 @@ call :log "[OK] Project files already present at %INSTALL_DIR%"
 echo.
 
 :: ---- Check for Python, install if missing ----
-python --version >nul 2>&1
+:: Use "python -c" to verify it's real Python, not the Windows Store stub
+python -c "import sys; sys.exit(0)" >nul 2>&1
 if !errorlevel! equ 0 goto :skip_python
 
 call :log "Python not found - downloading installer..."
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%INSTALL_DIR%\python-installer.exe' -UseBasicParsing"
 if not exist "%INSTALL_DIR%\python-installer.exe" goto :python_download_failed
 
-call :log "Installing Python 3.12 (this may take a minute)..."
+call :log "Installing Python 3.13 (this may take a minute)..."
 "%INSTALL_DIR%\python-installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
 del "%INSTALL_DIR%\python-installer.exe" 2>nul
 
