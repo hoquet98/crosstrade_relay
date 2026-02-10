@@ -75,8 +75,8 @@ call :log "Python not found - downloading installer..."
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%INSTALL_DIR%\python-installer.exe' -UseBasicParsing"
 if not exist "%INSTALL_DIR%\python-installer.exe" goto :python_download_failed
 
-call :log "Installing Python 3.13 (this may take a minute)..."
-"%INSTALL_DIR%\python-installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
+call :log "Installing Python 3.13 (this may take a few minutes)..."
+start /wait "" "%INSTALL_DIR%\python-installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
 del "%INSTALL_DIR%\python-installer.exe" 2>nul
 
 :: Refresh PATH so python is available in this session
