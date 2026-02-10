@@ -145,6 +145,11 @@ call :log "Initializing database..."
 call :log "[OK] Database initialized"
 echo.
 
+:: ---- Set permissions so all users can read/write the data folder ----
+icacls "%INSTALL_DIR%" /grant Users:(OI)(CI)F /T >nul 2>&1
+call :log "[OK] Directory permissions set"
+echo.
+
 :: ---- Download NSSM if not present ----
 set "NSSM_DIR=%INSTALL_DIR%\nssm"
 set "NSSM_EXE=%NSSM_DIR%\nssm.exe"
