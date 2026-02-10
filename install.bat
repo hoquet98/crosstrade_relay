@@ -6,7 +6,7 @@ set "REPO_URL=https://github.com/hoquet98/crosstrade_relay/archive/refs/heads/ma
 set "INSTALL_DIR=C:\TradeRelay"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.13.2/python-3.13.2-amd64.exe"
 set "SERVICE_NAME=TradeRelay"
-set "SERVICE_PORT=8080"
+set "SERVICE_PORT=80"
 set "LOG_FILE=%INSTALL_DIR%\install.log"
 
 :: Create install dir early so we can log
