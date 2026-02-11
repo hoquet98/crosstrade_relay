@@ -1,11 +1,17 @@
 import logging
 import httpx
+from datetime import datetime, timezone
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from contextlib import asynccontextmanager
 
 import database as db
+
+# Grace period (seconds) --if a position was opened within this window,
+# skip the CT API check and trust local ownership (prevents race conditions
+# when two strategies fire simultaneously).
+OWNERSHIP_GRACE_PERIOD = 30
 
 # --- Logging setup ---
 logging.basicConfig(
@@ -23,7 +29,7 @@ logger = logging.getLogger("trade_relay")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    logger.info("Trade Relay started — database initialized")
+    logger.info("Trade Relay started --database initialized")
     yield
     logger.info("Trade Relay shutting down")
 
@@ -150,7 +156,7 @@ async def check_ct_position(api_key: str, account: str, instrument: str) -> str 
                     return mp
                 return "flat"
 
-        # No matching instrument found — account is flat for this instrument
+        # No matching instrument found --account is flat for this instrument
         return "flat"
 
     except Exception as e:
@@ -193,88 +199,110 @@ async def process_signal(fields: dict, raw_payload: str = None) -> dict:
 
     if signal_type == "entry":
         if position is None:
-            # No position — this strategy wins, forward it
+            # No position --this strategy wins, forward it
             result = "forwarded"
-            details = f"Entry {get_direction(fields)} — {relay_id} takes ownership"
+            details = f"Entry {get_direction(fields)} --{relay_id} takes ownership"
             db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
         elif position["owner_id"] == relay_id:
             # Same strategy re-entering? Forward it, update direction
             result = "forwarded"
-            details = f"Re-entry {get_direction(fields)} — {relay_id} already owns position"
+            details = f"Re-entry {get_direction(fields)} --{relay_id} already owns position"
             db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
         else:
-            # Different strategy trying to enter — check CT API before blocking
-            # Maybe the position was closed externally (ATM, manual, account mgmt)
-            ct_state = await check_ct_position(user["crosstrade_key"], account, instrument)
+            # Different strategy trying to enter --check if within grace period
+            opened_at = datetime.fromisoformat(position["opened_at"])
+            age_seconds = (datetime.now(timezone.utc) - opened_at).total_seconds()
 
-            if ct_state == "flat":
-                # Position was closed externally — clear stale ownership, let this entry through
-                result = "forwarded"
-                details = (f"Entry {get_direction(fields)} — stale ownership cleared "
-                          f"(CT API shows flat, was owned by {position['owner_id']}), "
-                          f"{relay_id} takes ownership")
-                db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
-                logger.info(f"[{relay_user}] Stale position detected via CT API — "
-                           f"cleared {position['owner_id']}, {relay_id} entering")
-            elif ct_state is None:
-                # API call failed — block to be safe
+            if age_seconds < OWNERSHIP_GRACE_PERIOD:
+                # Position was taken very recently --trust local DB, block without CT API
                 result = "blocked"
-                details = (f"Entry blocked — position owned by {position['owner_id']} "
-                          f"(CT API check failed, blocking conservatively)")
+                details = (f"Entry blocked --position owned by {position['owner_id']} "
+                          f"({age_seconds:.0f}s ago, within {OWNERSHIP_GRACE_PERIOD}s grace period)")
+                logger.info(f"[{relay_user}/{relay_id}] Blocked within grace period --"
+                           f"{position['owner_id']} took ownership {age_seconds:.0f}s ago")
             else:
-                # Position is still open — block
-                result = "blocked"
-                details = (f"Entry blocked — position owned by {position['owner_id']} "
-                          f"(confirmed {ct_state} via CT API)")
+                # Position is old enough --check CT API for stale ownership
+                ct_state = await check_ct_position(user["crosstrade_key"], account, instrument)
+
+                if ct_state == "flat":
+                    # Position was closed externally --clear stale ownership, let this entry through
+                    result = "forwarded"
+                    details = (f"Entry {get_direction(fields)} --stale ownership cleared "
+                              f"(CT API shows flat, was owned by {position['owner_id']}), "
+                              f"{relay_id} takes ownership")
+                    db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
+                    logger.info(f"[{relay_user}] Stale position detected via CT API --"
+                               f"cleared {position['owner_id']}, {relay_id} entering")
+                elif ct_state is None:
+                    # API call failed --block to be safe
+                    result = "blocked"
+                    details = (f"Entry blocked --position owned by {position['owner_id']} "
+                              f"(CT API check failed, blocking conservatively)")
+                else:
+                    # Position is still open --block
+                    result = "blocked"
+                    details = (f"Entry blocked --position owned by {position['owner_id']} "
+                              f"(confirmed {ct_state} via CT API)")
 
     elif signal_type == "exit":
         if position is None:
-            # No tracked position — forward anyway (might be manual or out of sync)
+            # No tracked position --forward anyway (might be manual or out of sync)
             result = "forwarded"
-            details = f"Exit with no tracked position — forwarding to be safe"
+            details = f"Exit with no tracked position --forwarding to be safe"
         elif position["owner_id"] == relay_id:
-            # Owner is closing — forward and clear ownership
+            # Owner is closing --forward and clear ownership
             result = "forwarded"
-            details = f"Exit — {relay_id} closing position"
+            details = f"Exit --{relay_id} closing position"
             db.clear_position(relay_user, account, instrument)
         else:
-            # Phantom exit from blocked strategy — drop it
+            # Phantom exit from blocked strategy --drop it
             result = "dropped"
-            details = f"Phantom exit dropped — position owned by {position['owner_id']}, not {relay_id}"
+            details = f"Phantom exit dropped --position owned by {position['owner_id']}, not {relay_id}"
 
     elif signal_type == "reversal":
         if position is None:
-            # No tracked position — forward, set new owner
+            # No tracked position --forward, set new owner
             result = "forwarded"
-            details = f"Reversal to {get_direction(fields)} — {relay_id} takes ownership"
+            details = f"Reversal to {get_direction(fields)} --{relay_id} takes ownership"
             db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
         elif position["owner_id"] == relay_id:
-            # Owner reversing — forward and update direction
+            # Owner reversing --forward and update direction
             result = "forwarded"
-            details = f"Reversal to {get_direction(fields)} — {relay_id} reversing"
+            details = f"Reversal to {get_direction(fields)} --{relay_id} reversing"
             db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
         else:
-            # Different strategy trying to reverse — check CT API before blocking
-            ct_state = await check_ct_position(user["crosstrade_key"], account, instrument)
+            # Different strategy trying to reverse --check if within grace period
+            opened_at = datetime.fromisoformat(position["opened_at"])
+            age_seconds = (datetime.now(timezone.utc) - opened_at).total_seconds()
 
-            if ct_state == "flat":
-                result = "forwarded"
-                details = (f"Reversal to {get_direction(fields)} — stale ownership cleared "
-                          f"(CT API shows flat), {relay_id} takes ownership")
-                db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
-            elif ct_state is None:
+            if age_seconds < OWNERSHIP_GRACE_PERIOD:
                 result = "blocked"
-                details = (f"Reversal blocked — position owned by {position['owner_id']} "
-                          f"(CT API check failed, blocking conservatively)")
+                details = (f"Reversal blocked --position owned by {position['owner_id']} "
+                          f"({age_seconds:.0f}s ago, within {OWNERSHIP_GRACE_PERIOD}s grace period)")
+                logger.info(f"[{relay_user}/{relay_id}] Reversal blocked within grace period --"
+                           f"{position['owner_id']} took ownership {age_seconds:.0f}s ago")
             else:
-                result = "blocked"
-                details = (f"Reversal blocked — position owned by {position['owner_id']} "
-                          f"(confirmed {ct_state} via CT API)")
+                # Position is old enough --check CT API for stale ownership
+                ct_state = await check_ct_position(user["crosstrade_key"], account, instrument)
+
+                if ct_state == "flat":
+                    result = "forwarded"
+                    details = (f"Reversal to {get_direction(fields)} --stale ownership cleared "
+                              f"(CT API shows flat), {relay_id} takes ownership")
+                    db.set_position(relay_user, account, instrument, relay_id, get_direction(fields))
+                elif ct_state is None:
+                    result = "blocked"
+                    details = (f"Reversal blocked --position owned by {position['owner_id']} "
+                              f"(CT API check failed, blocking conservatively)")
+                else:
+                    result = "blocked"
+                    details = (f"Reversal blocked --position owned by {position['owner_id']} "
+                              f"(confirmed {ct_state} via CT API)")
 
     else:
-        # Unknown signal type — no sync fields, forward as-is (no position tracking)
+        # Unknown signal type --no sync fields, forward as-is (no position tracking)
         result = "forwarded"
-        details = "No market_position fields — forwarding without relay logic"
+        details = "No market_position fields --forwarding without relay logic"
 
     # Forward to CrossTrade if not blocked/dropped
     forwarded_payload = None
@@ -287,7 +315,7 @@ async def process_signal(fields: dict, raw_payload: str = None) -> dict:
                     content=forwarded_payload,
                     headers={"Content-Type": "text/plain"}
                 )
-            logger.info(f"[{relay_user}/{relay_id}] {signal_type.upper()} → CrossTrade {response.status_code}")
+            logger.info(f"[{relay_user}/{relay_id}] {signal_type.upper()} -> CrossTrade {response.status_code}")
 
             # Log the signal with both payloads
             db.add_log(
@@ -312,7 +340,7 @@ async def process_signal(fields: dict, raw_payload: str = None) -> dict:
             )
             return {"result": "error", "details": error_msg}
     else:
-        logger.info(f"[{relay_user}/{relay_id}] {signal_type.upper()} → {result.upper()}: {details}")
+        logger.info(f"[{relay_user}/{relay_id}] {signal_type.upper()} -> {result.upper()}: {details}")
         db.add_log(
             relay_user=relay_user, relay_id=relay_id,
             account=account, instrument=instrument,
@@ -342,7 +370,7 @@ async def verify_bearer(credentials: HTTPAuthorizationCredentials = Depends(bear
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    """Main webhook endpoint — receives TradingView alerts."""
+    """Main webhook endpoint --receives TradingView alerts."""
     body = await request.body()
     body_text = body.decode("utf-8").strip()
 
