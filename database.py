@@ -23,6 +23,7 @@ def init_db():
             relay_user TEXT UNIQUE NOT NULL,
             crosstrade_key TEXT NOT NULL,
             ct_webhook_url TEXT NOT NULL,
+            nt_query_token TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -54,6 +55,11 @@ def init_db():
             forwarded_payload TEXT
         );
     """)
+
+    # Migrate existing users table if columns are missing
+    user_columns = [row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()]
+    if "nt_query_token" not in user_columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN nt_query_token TEXT")
 
     # Migrate existing logs table if columns are missing
     columns = [row[1] for row in cursor.execute("PRAGMA table_info(logs)").fetchall()]
@@ -104,6 +110,25 @@ def get_user_by_key(crosstrade_key: str) -> dict | None:
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def get_user_by_nt_token(nt_token: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM users WHERE nt_query_token = ?", (nt_token,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def set_nt_query_token(relay_user: str, nt_query_token: str):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET nt_query_token = ? WHERE relay_user = ?",
+        (nt_query_token, relay_user)
+    )
+    conn.commit()
+    conn.close()
 
 
 def list_users() -> list[dict]:

@@ -444,6 +444,123 @@ async def clear_position(request: Request, _user: dict = Depends(verify_bearer))
     return {"status": "ok", "details": "Position ownership cleared"}
 
 
+# --- NinjaTrader DB query endpoint ---
+
+NT_DB_PATH = r"C:\Program Files\NinjaTrader 8\db\NinjaTrader.sqlite"
+
+# SQL keywords that modify data -- block these
+_WRITE_KEYWORDS = {
+    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "REPLACE",
+    "ATTACH", "DETACH", "REINDEX", "VACUUM", "PRAGMA",
+}
+
+
+def _is_read_only(sql: str) -> bool:
+    """Check that a SQL statement is read-only (SELECT/WITH only)."""
+    stripped = sql.strip().rstrip(";").strip()
+    # Remove leading comments
+    while stripped.startswith("--"):
+        stripped = stripped.split("\n", 1)[-1].strip()
+    # Must start with SELECT or WITH
+    first_word = stripped.split()[0].upper() if stripped.split() else ""
+    if first_word not in ("SELECT", "WITH"):
+        return False
+    # Scan for write keywords
+    upper = stripped.upper()
+    for kw in _WRITE_KEYWORDS:
+        # Check as whole word (surrounded by non-alpha chars or at boundaries)
+        import re
+        if re.search(rf"\b{kw}\b", upper):
+            return False
+    return True
+
+
+async def verify_nt_access(request: Request) -> dict:
+    """Dual auth: Bearer token (CT key) + X-NT-Token header."""
+    # Check Bearer token first
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    ct_key = auth_header[7:]
+    user = db.get_user_by_key(ct_key)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    # Check NT-specific token
+    nt_token = request.headers.get("X-NT-Token", "")
+    if not nt_token:
+        raise HTTPException(status_code=401, detail="Missing X-NT-Token header")
+    if not user.get("nt_query_token"):
+        raise HTTPException(status_code=403, detail="NT query access not configured for this user")
+    if nt_token != user["nt_query_token"]:
+        raise HTTPException(status_code=401, detail="Invalid NT token")
+
+    return user
+
+
+@app.post("/nt/query")
+async def nt_query(request: Request):
+    """Execute a read-only SQL query against the NinjaTrader SQLite database.
+
+    Requires dual auth: Bearer token + X-NT-Token header.
+    Body: {"sql": "SELECT ...", "limit": 1000}
+    """
+    user = await verify_nt_access(request)
+    data = await request.json()
+
+    sql = data.get("sql", "").strip()
+    if not sql:
+        raise HTTPException(status_code=400, detail="Missing 'sql' field")
+
+    if not _is_read_only(sql):
+        raise HTTPException(status_code=403, detail="Only SELECT queries are allowed")
+
+    limit = min(data.get("limit", 1000), 5000)
+
+    import os
+    if not os.path.exists(NT_DB_PATH):
+        raise HTTPException(status_code=503, detail="NinjaTrader database not found")
+
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{NT_DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(sql)
+        rows = cursor.fetchmany(limit)
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        result = [dict(row) for row in rows]
+        conn.close()
+
+        logger.info(f"[{user['relay_user']}] NT query: {sql[:100]}... -> {len(result)} rows")
+        return {"columns": columns, "rows": result, "count": len(result)}
+
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=400, detail=f"SQL error: {str(e)}")
+
+
+@app.get("/nt/tables")
+async def nt_tables(request: Request):
+    """List all tables in the NinjaTrader database. Requires dual auth."""
+    user = await verify_nt_access(request)
+
+    import os
+    if not os.path.exists(NT_DB_PATH):
+        raise HTTPException(status_code=503, detail="NinjaTrader database not found")
+
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{NT_DB_PATH}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name"
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    except sqlite3.Error as e:
+        raise HTTPException(status_code=400, detail=f"SQL error: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=80)

@@ -5,6 +5,7 @@ Usage:
     python manage.py add-user
     python manage.py list-users
     python manage.py remove-user <relay_user>
+    python manage.py set-nt-token <relay_user>
     python manage.py positions [relay_user]
     python manage.py clear-position <relay_user> <account> <instrument>
     python manage.py logs [relay_user] [--limit N]
@@ -93,6 +94,21 @@ def main():
             print("Usage: python manage.py remove-user <relay_user>")
             return
         remove_user(sys.argv[2])
+    elif cmd == "set-nt-token":
+        if len(sys.argv) < 3:
+            print("Usage: python manage.py set-nt-token <relay_user>")
+            return
+        relay_user = sys.argv[2]
+        user = db.get_user(relay_user)
+        if not user:
+            print(f"\n  [ERROR] User '{relay_user}' not found.")
+            return
+        import secrets
+        token = secrets.token_urlsafe(32)
+        db.set_nt_query_token(relay_user, token)
+        print(f"\n  [OK] NT query token set for '{relay_user}':")
+        print(f"  {token}")
+        print(f"\n  Use this as the X-NT-Token header when calling /nt/query")
     elif cmd == "positions":
         relay_user = sys.argv[2] if len(sys.argv) > 2 else None
         show_positions(relay_user)
