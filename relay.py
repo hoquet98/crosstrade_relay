@@ -446,7 +446,8 @@ async def clear_position(request: Request, _user: dict = Depends(verify_bearer))
 
 # --- NinjaTrader DB query endpoint ---
 
-NT_DB_PATH = r"C:\Program Files\NinjaTrader 8\db\NinjaTrader.sqlite"
+NT_DB_DIR = r"C:\Users\Administrator\Documents\NinjaTrader 8\db"
+NT_DB_DEFAULT = "NinjaTrader.sqlite"
 
 # SQL keywords that modify data -- block these
 _WRITE_KEYWORDS = {
@@ -517,13 +518,19 @@ async def nt_query(request: Request):
 
     limit = min(data.get("limit", 1000), 5000)
 
+    # Resolve database path — accepts relative path within NT_DB_DIR
     import os
-    if not os.path.exists(NT_DB_PATH):
-        raise HTTPException(status_code=503, detail="NinjaTrader database not found")
+    db_name = data.get("db", NT_DB_DEFAULT)
+    # Prevent path traversal
+    if ".." in db_name or db_name.startswith("/") or db_name.startswith("\\") or ":" in db_name:
+        raise HTTPException(status_code=400, detail="Invalid db path")
+    db_path = os.path.join(NT_DB_DIR, db_name)
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=503, detail=f"Database not found: {db_name}")
 
     try:
         import sqlite3
-        conn = sqlite3.connect(f"file:{NT_DB_PATH}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         cursor = conn.execute(sql)
         rows = cursor.fetchmany(limit)
@@ -539,17 +546,21 @@ async def nt_query(request: Request):
 
 
 @app.get("/nt/tables")
-async def nt_tables(request: Request):
+async def nt_tables(request: Request, db: str = None):
     """List all tables in the NinjaTrader database. Requires dual auth."""
     user = await verify_nt_access(request)
 
     import os
-    if not os.path.exists(NT_DB_PATH):
-        raise HTTPException(status_code=503, detail="NinjaTrader database not found")
+    db_name = db or NT_DB_DEFAULT
+    if ".." in db_name or db_name.startswith("/") or db_name.startswith("\\") or ":" in db_name:
+        raise HTTPException(status_code=400, detail="Invalid db path")
+    db_path = os.path.join(NT_DB_DIR, db_name)
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=503, detail=f"Database not found: {db_name}")
 
     try:
         import sqlite3
-        conn = sqlite3.connect(f"file:{NT_DB_PATH}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name"
