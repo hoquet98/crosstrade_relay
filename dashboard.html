@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Gate — Trade Conviction Filter</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg-primary: #0a0b0f;
+    --bg-card: #12131a;
+    --bg-card-hover: #181924;
+    --border: #1e2030;
+    --border-accent: #2a2d42;
+    --text-primary: #e4e6f0;
+    --text-secondary: #7b7f9e;
+    --text-dim: #4a4d66;
+    --agree: #00e676;
+    --agree-bg: rgba(0, 230, 118, 0.08);
+    --agree-border: rgba(0, 230, 118, 0.25);
+    --disagree: #ff1744;
+    --disagree-bg: rgba(255, 23, 68, 0.08);
+    --disagree-border: rgba(255, 23, 68, 0.25);
+    --timeout: #ff9800;
+    --timeout-bg: rgba(255, 152, 0, 0.08);
+    --error: #9e9e9e;
+    --accent: #5c6bc0;
+    --accent-glow: rgba(92, 107, 192, 0.15);
+    --forwarded: #00e676;
+    --blocked: #ff9800;
+    --rejected: #ff1744;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .noise {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app {
+    position: relative;
+    z-index: 1;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 32px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-left { display: flex; align-items: center; gap: 16px; }
+
+  .logo {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--accent), #7c4dff);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 18px;
+    color: white;
+    box-shadow: 0 4px 20px var(--accent-glow);
+  }
+
+  .header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+
+  .header h1 span { color: var(--text-dim); font-weight: 300; }
+
+  .live-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+  }
+
+  .live-dot::before {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--agree);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(0, 230, 118, 0); }
+  }
+
+  /* ── Stats Row ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    transition: border-color 0.2s;
+  }
+
+  .stat-card:hover { border-color: var(--border-accent); }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -1px;
+  }
+
+  .stat-value.agree { color: var(--agree); }
+  .stat-value.disagree { color: var(--disagree); }
+  .stat-value.timeout { color: var(--timeout); }
+  .stat-value.neutral { color: var(--text-primary); }
+  .stat-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* ── Section Titles ── */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-secondary);
+  }
+
+  .refresh-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .refresh-btn:hover {
+    color: var(--text-secondary);
+    border-color: var(--border-accent);
+    background: var(--bg-card);
+  }
+
+  /* ── Decision Log ── */
+  .log-table {
+    width: 100%;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+
+  .log-table table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .log-table thead th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+    text-align: left;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.01);
+    position: sticky;
+    top: 0;
+  }
+
+  .log-table tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+
+  .log-table tbody tr:last-child { border-bottom: none; }
+  .log-table tbody tr:hover { background: var(--bg-card-hover); }
+
+  .log-table td {
+    font-size: 13px;
+    padding: 12px 16px;
+    vertical-align: middle;
+  }
+
+  .mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  .time-cell {
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    text-transform: uppercase;
+  }
+
+  .badge-agree {
+    background: var(--agree-bg);
+    color: var(--agree);
+    border: 1px solid var(--agree-border);
+  }
+
+  .badge-disagree {
+    background: var(--disagree-bg);
+    color: var(--disagree);
+    border: 1px solid var(--disagree-border);
+  }
+
+  .badge-timeout {
+    background: var(--timeout-bg);
+    color: var(--timeout);
+    border: 1px solid rgba(255, 152, 0, 0.25);
+  }
+
+  .badge-error {
+    background: rgba(158,158,158,0.08);
+    color: var(--error);
+    border: 1px solid rgba(158,158,158,0.25);
+  }
+
+  .badge-long {
+    background: rgba(0, 230, 118, 0.06);
+    color: var(--agree);
+    border: 1px solid rgba(0, 230, 118, 0.15);
+  }
+
+  .badge-short {
+    background: rgba(255, 23, 68, 0.06);
+    color: var(--disagree);
+    border: 1px solid rgba(255, 23, 68, 0.15);
+  }
+
+  .badge-forwarded {
+    color: var(--forwarded);
+  }
+
+  .badge-ai_rejected, .badge-ai_timeout, .badge-ai_error {
+    color: var(--text-dim);
+  }
+
+  .badge-dry_run {
+    color: var(--timeout);
+  }
+
+  .badge-blocked {
+    color: var(--blocked);
+  }
+
+  /* ── Reason tooltip ── */
+  .reason-cell {
+    max-width: 320px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reason-cell:hover {
+    white-space: normal;
+    overflow: visible;
+  }
+
+  /* ── Latency bar ── */
+  .latency-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .latency-fill {
+    height: 4px;
+    border-radius: 2px;
+    min-width: 4px;
+    max-width: 60px;
+    transition: width 0.3s;
+  }
+
+  .latency-fast { background: var(--agree); }
+  .latency-mid { background: var(--timeout); }
+  .latency-slow { background: var(--disagree); }
+
+  .latency-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  /* ── Empty State ── */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+  }
+
+  .empty-state .icon {
+    font-size: 40px;
+    margin-bottom: 12px;
+    opacity: 0.4;
+  }
+
+  /* ── Payload Modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal-overlay.active { display: flex; }
+
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border-accent);
+    border-radius: 14px;
+    max-width: 700px;
+    width: 90%;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+
+  .modal-close:hover {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+  }
+
+  .modal-body {
+    padding: 20px;
+    overflow-y: auto;
+  }
+
+  .modal-body pre {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* ── Config ── */
+  .config-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+    padding: 14px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .config-bar label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+  }
+
+  .config-bar input, .config-bar select {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    padding: 6px 10px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .config-bar input:focus, .config-bar select:focus {
+    border-color: var(--accent);
+  }
+
+  .config-bar input { width: 60px; }
+
+  /* ── Score dots ── */
+  .score-dots {
+    display: flex;
+    gap: 3px;
+  }
+
+  .score-dot {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+  }
+
+  .score-dot.active { background: var(--agree); }
+  .score-dot.inactive { background: var(--border); }
+
+  .mode-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    text-transform: uppercase;
+  }
+
+  .mode-dry-run {
+    background: rgba(255, 152, 0, 0.1);
+    color: var(--timeout);
+    border: 1px solid rgba(255, 152, 0, 0.3);
+  }
+
+  .mode-live {
+    background: rgba(0, 230, 118, 0.1);
+    color: var(--agree);
+    border: 1px solid rgba(0, 230, 118, 0.3);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .app { padding: 16px; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .log-table { overflow-x: auto; }
+    .log-table table { min-width: 800px; }
+  }
+</style>
+</head>
+<body>
+<div class="noise"></div>
+<div class="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">AI</div>
+      <h1>AI Gate <span>— Trade Conviction Filter</span></h1>
+    </div>
+    <div class="live-dot" id="liveStatus">Polling every <span id="intervalDisplay">5</span>s</div>
+    <div class="mode-badge mode-dry-run" id="modeBadge">DRY RUN</div>
+  </div>
+
+  <!-- Config -->
+  <div class="config-bar">
+    <label>Refresh</label>
+    <input type="number" id="pollInterval" value="5" min="2" max="60" style="width:50px"> <span style="color:var(--text-dim);font-size:11px">sec</span>
+    <label style="margin-left:16px">Rows</label>
+    <input type="number" id="logLimit" value="50" min="10" max="500">
+    <label style="margin-left:16px">Filter</label>
+    <select id="filterDecision">
+      <option value="">All</option>
+      <option value="AGREE">Agree</option>
+      <option value="DISAGREE">Disagree</option>
+      <option value="TIMEOUT">Timeout</option>
+      <option value="ERROR">Error</option>
+    </select>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-card">
+      <div class="stat-label">Total Signals</div>
+      <div class="stat-value neutral" id="statTotal">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Agreed</div>
+      <div class="stat-value agree" id="statAgree">—</div>
+      <div class="stat-sub" id="statAgreeRate">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Disagreed</div>
+      <div class="stat-value disagree" id="statDisagree">—</div>
+      <div class="stat-sub" id="statDisagreeRate">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Timeouts</div>
+      <div class="stat-value timeout" id="statTimeout">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Latency</div>
+      <div class="stat-value neutral" id="statLatency">—</div>
+      <div class="stat-sub">ms</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Agree Rate</div>
+      <div class="stat-value agree" id="statRate">—</div>
+      <div class="stat-sub">of total signals</div>
+    </div>
+  </div>
+
+  <!-- Decision Log -->
+  <div class="section-header">
+    <div class="section-title">Decision Log</div>
+    <button class="refresh-btn" onclick="fetchAll()">Refresh Now</button>
+  </div>
+  <div class="log-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Strategy</th>
+          <th>Instrument</th>
+          <th>Signal</th>
+          <th>Score</th>
+          <th>AI Decision</th>
+          <th>Relay</th>
+          <th>Latency</th>
+          <th>Reason</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="logBody">
+        <tr><td colspan="10" class="empty-state"><div class="icon">⏳</div>No signals yet — waiting for first alert</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Payload Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">Signal Payload</h3>
+      <button class="modal-close" onclick="document.getElementById('modalOverlay').classList.remove('active')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <pre id="modalContent"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+  const BASE = window.location.origin;
+  let pollTimer = null;
+
+  function el(id) { return document.getElementById(id); }
+
+  // ── Fetch health / mode ──
+  async function fetchHealth() {
+    try {
+      const resp = await fetch(`${BASE}/health`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const badge = el('modeBadge');
+      if (data.ai_gate === 'live') {
+        badge.textContent = 'LIVE';
+        badge.className = 'mode-badge mode-live';
+      } else {
+        badge.textContent = 'DRY RUN';
+        badge.className = 'mode-badge mode-dry-run';
+      }
+    } catch (e) {
+      console.error('Health fetch error:', e);
+    }
+  }
+
+  // ── Fetch stats ──
+  async function fetchStats() {
+    try {
+      const resp = await fetch(`${BASE}/webhook/ai/stats`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      const agree = data.AGREE?.count || 0;
+      const disagree = data.DISAGREE?.count || 0;
+      const timeout = (data.TIMEOUT?.count || 0) + (data.ERROR?.count || 0);
+      const total = data.total || 0;
+
+      el('statTotal').textContent = total;
+      el('statAgree').textContent = agree;
+      el('statDisagree').textContent = disagree;
+      el('statTimeout').textContent = timeout;
+
+      const avgLat = data.AGREE?.avg_latency_ms || data.DISAGREE?.avg_latency_ms || 0;
+      el('statLatency').textContent = Math.round(avgLat);
+
+      const rate = total > 0 ? ((agree / total) * 100).toFixed(1) + '%' : '—';
+      el('statRate').textContent = rate;
+      el('statAgreeRate').textContent = total > 0 ? ((agree / total) * 100).toFixed(1) + '% of total' : '';
+      el('statDisagreeRate').textContent = total > 0 ? ((disagree / total) * 100).toFixed(1) + '% of total' : '';
+    } catch (e) {
+      console.error('Stats fetch error:', e);
+    }
+  }
+
+  // ── Fetch logs ──
+  async function fetchLogs() {
+    try {
+      const limit = el('logLimit').value || 50;
+      const resp = await fetch(`${BASE}/webhook/ai/logs?limit=${limit}`);
+      if (!resp.ok) return;
+      const logs = await resp.json();
+
+      const filterVal = el('filterDecision').value;
+      const filtered = filterVal ? logs.filter(l => l.ai_decision === filterVal) : logs;
+
+      if (filtered.length === 0) {
+        el('logBody').innerHTML = '<tr><td colspan="10" class="empty-state"><div class="icon">⏳</div>No signals yet — waiting for first alert</td></tr>';
+        return;
+      }
+
+      el('logBody').innerHTML = filtered.map(log => {
+        const ts = formatTime(log.timestamp);
+        const signal = log.signal?.toUpperCase() || '?';
+        const signalClass = signal === 'LONG' ? 'badge-long' : signal === 'SHORT' ? 'badge-short' : '';
+        const decisionClass = `badge-${log.ai_decision?.toLowerCase() || 'error'}`;
+        const relayClass = `badge-${log.relay_result?.toLowerCase() || ''}`;
+        const score = log.confluence_score ?? 0;
+        const latency = log.ai_latency_ms || 0;
+        const latencyClass = latency < 2000 ? 'latency-fast' : latency < 5000 ? 'latency-mid' : 'latency-slow';
+        const latencyWidth = Math.min(60, Math.max(4, latency / 100));
+
+        return `<tr>
+          <td class="time-cell">${ts}</td>
+          <td class="mono">${log.strategy || '—'}</td>
+          <td class="mono">${log.instrument || '—'}</td>
+          <td><span class="badge ${signalClass}">${signal}</span></td>
+          <td>${renderScore(score)}</td>
+          <td><span class="badge ${decisionClass}">${log.ai_decision || '?'}</span></td>
+          <td><span class="mono ${relayClass}">${log.relay_result || '—'}</span></td>
+          <td>
+            <div class="latency-bar">
+              <div class="latency-fill ${latencyClass}" style="width:${latencyWidth}px"></div>
+              <span class="latency-text">${latency}ms</span>
+            </div>
+          </td>
+          <td class="reason-cell">${log.ai_reason || '—'}</td>
+          <td><button class="refresh-btn" onclick='showPayload(${JSON.stringify(JSON.stringify(log))})'>⋯</button></td>
+        </tr>`;
+      }).join('');
+
+    } catch (e) {
+      console.error('Logs fetch error:', e);
+    }
+  }
+
+  function renderScore(score) {
+    let dots = '';
+    for (let i = 0; i < 4; i++) {
+      dots += `<div class="score-dot ${i < score ? 'active' : 'inactive'}"></div>`;
+    }
+    return `<div class="score-dots" title="${score}/4">${dots}</div>`;
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '—';
+    try {
+      const d = new Date(ts + (ts.endsWith('Z') ? '' : 'Z'));
+      const now = new Date();
+      const diffMs = now - d;
+      const diffMin = Math.floor(diffMs / 60000);
+
+      let relative;
+      if (diffMin < 1) relative = 'just now';
+      else if (diffMin < 60) relative = `${diffMin}m ago`;
+      else if (diffMin < 1440) relative = `${Math.floor(diffMin/60)}h ago`;
+      else relative = `${Math.floor(diffMin/1440)}d ago`;
+
+      const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      return `${time}<br><span style="color:var(--text-dim);font-size:10px">${relative}</span>`;
+    } catch { return ts; }
+  }
+
+  function showPayload(logJsonStr) {
+    try {
+      const log = JSON.parse(logJsonStr);
+      let content = '';
+
+      content += '═══ AI DECISION ═══\n';
+      content += `Decision: ${log.ai_decision}\n`;
+      content += `Reason:   ${log.ai_reason}\n`;
+      content += `Latency:  ${log.ai_latency_ms}ms\n\n`;
+
+      content += '═══ RELAY RESULT ═══\n';
+      content += `Result:   ${log.relay_result}\n`;
+      content += `Details:  ${log.relay_details}\n\n`;
+
+      if (log.payload_json) {
+        content += '═══ INDICATOR PAYLOAD ═══\n';
+        try {
+          content += JSON.stringify(JSON.parse(log.payload_json), null, 2);
+        } catch {
+          content += log.payload_json;
+        }
+      }
+
+      if (log.ai_raw_response) {
+        content += '\n\n═══ RAW AI RESPONSE ═══\n';
+        content += log.ai_raw_response;
+      }
+
+      el('modalTitle').textContent = `${log.signal} ${log.instrument} — ${log.strategy || 'Signal'} @ ${log.timestamp || ''}`;
+      el('modalContent').textContent = content;
+      el('modalOverlay').classList.add('active');
+    } catch (e) {
+      console.error('Modal error:', e);
+    }
+  }
+
+  function closeModal(e) {
+    if (e.target === el('modalOverlay')) {
+      el('modalOverlay').classList.remove('active');
+    }
+  }
+
+  // ── Polling ──
+  async function fetchAll() {
+    await Promise.all([fetchHealth(), fetchStats(), fetchLogs()]);
+  }
+
+  function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    const sec = Math.max(2, parseInt(el('pollInterval').value) || 5);
+    el('intervalDisplay').textContent = sec;
+    pollTimer = setInterval(fetchAll, sec * 1000);
+  }
+
+  el('pollInterval').addEventListener('change', startPolling);
+  el('filterDecision').addEventListener('change', fetchLogs);
+  el('logLimit').addEventListener('change', fetchLogs);
+
+  // ── Init ──
+  fetchAll();
+  startPolling();
+</script>
+</body>
+</html>

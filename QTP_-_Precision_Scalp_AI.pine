@@ -1,0 +1,613 @@
+// ══════════════════════════════════════════════════════════════════════════════
+// QTP - Precision Scalp AI v1.2.0
+// © QuantTradingPro
+// ══════════════════════════════════════════════════════════════════════════════
+// AI Gate Edition — entry signals + per-bar manage alerts for AI trade management
+// ══════════════════════════════════════════════════════════════════════════════
+//@version=6
+indicator("QTP - Precision Scalp AI v1.2.0", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Layer 1: ZLEMA Micro-Trend ──────────────────────────────────────────────
+zlPeriod   = input.int(8,   "ZLEMA Period",   minval=2, group="Layer 1: ZLEMA")
+zlSlopeLB  = input.int(1,   "Slope Lookback", minval=1, group="Layer 1: ZLEMA")
+
+// ── Layer 2: WaveTrend ──────────────────────────────────────────────────────
+wtChannel  = input.int(6,       "Channel Length",       minval=1, group="Layer 2: WaveTrend")
+wtAvg      = input.int(9,       "Average Length",       minval=1, group="Layer 2: WaveTrend")
+wtMa       = input.int(2,       "MA Length",            minval=1, group="Layer 2: WaveTrend")
+wtOB       = input.float(50.0,  "Overbought",                     group="Layer 2: WaveTrend")
+wtOS       = input.float(-50.0, "Oversold",                        group="Layer 2: WaveTrend")
+wtOBShort  = input.float(55.0,  "Short OB Threshold",             group="Layer 2: WaveTrend")
+wtOSShort  = input.float(-45.0, "Short OS Threshold",             group="Layer 2: WaveTrend")
+
+// ── Layer 3: Squeeze Momentum ───────────────────────────────────────────────
+sqBBPeriod = input.int(20,     "BB Period",     minval=1, group="Layer 3: Squeeze")
+sqBBMult   = input.float(2.0,  "BB Multiplier",          group="Layer 3: Squeeze")
+sqKCPeriod = input.int(20,     "KC Period",     minval=1, group="Layer 3: Squeeze")
+sqKCMult   = input.float(1.5,  "KC Multiplier",          group="Layer 3: Squeeze")
+
+// ── Layer 4: Efficiency Ratio ───────────────────────────────────────────────
+erPeriod   = input.int(8,      "ER Period",    minval=1, group="Layer 4: Efficiency Ratio")
+erThresh   = input.float(0.2,  "ER Threshold",           group="Layer 4: Efficiency Ratio")
+
+// ── Layer 5: UT Bot (TRIGGER) ───────────────────────────────────────────────
+utKey      = input.float(0.4,  "Key Value",               group="Layer 5: UT Bot")
+utATR      = input.int(5,      "ATR Period",   minval=1,  group="Layer 5: UT Bot")
+
+// ── Confluence ──────────────────────────────────────────────────────────────
+minLayers  = input.int(2,      "Min Filter Layers", minval=1, maxval=4, group="Confluence")
+
+// ── Signal Strength Filter ────────────────────────────────────────────────
+show2of4 = input.bool(true, "Show 2/4 Signals", group="Signal Strength Filter")
+show3of4 = input.bool(true, "Show 3/4 Signals", group="Signal Strength Filter")
+show4of4 = input.bool(true, "Show 4/4 Signals", group="Signal Strength Filter")
+
+// ── AI Gate Settings ────────────────────────────────────────────────────────
+aiHTF          = input.timeframe("5", "HTF for Bias",                      group="AI Gate")
+aiTargetTicks  = input.int(50,       "Target (ticks)",       minval=1,     group="AI Gate")
+aiStopTicks    = input.int(30,       "Stop (ticks)",         minval=1,     group="AI Gate")
+aiStrategyType = input.string("scalp", "Strategy Type", options=["scalp", "swing", "trend"], group="AI Gate")
+
+// ── AI Gate — CrossTrade Routing ────────────────────────────────────────────
+aiRelayUser    = input.string("myuser",          "Relay User",             group="AI Gate Routing")
+aiRelayId      = input.string("precision_scalp", "Relay ID",              group="AI Gate Routing")
+aiAccount      = input.string("",                "Account Name",          group="AI Gate Routing")
+aiQty          = input.int(1,                    "Quantity",   minval=1,  group="AI Gate Routing")
+aiStrategyTag  = input.string("",                "Strategy Tag (CT Lock)", group="AI Gate Routing")
+
+// ── AI Trade Management ─────────────────────────────────────────────────────
+aiTickValue     = input.float(10.0,  "Tick Value ($)",                      group="AI Trade Mgmt")
+aiMaxBarsHold   = input.int(60,      "Max Bars in Trade",    minval=5,     group="AI Trade Mgmt")
+aiHardStopTicks = input.int(25,      "Hard Stop (ticks)",    minval=1,     group="AI Trade Mgmt")
+
+// ── Stoch RSI (for exit scoring) ────────────────────────────────────────────
+stochLen   = input.int(14,  "Stoch RSI Length",   minval=1, group="Exit: Stoch RSI")
+stochK     = input.int(3,   "Stoch K Smooth",     minval=1, group="Exit: Stoch RSI")
+stochD     = input.int(3,   "Stoch D Smooth",     minval=1, group="Exit: Stoch RSI")
+stochOB    = input.float(80.0, "Stoch OB Level",            group="Exit: Stoch RSI")
+stochOS    = input.float(20.0, "Stoch OS Level",            group="Exit: Stoch RSI")
+
+// ── Session Settings (for AI context) ───────────────────────────────────────
+aiSessionTZ    = input.string("America/New_York", "Session Timezone",      group="AI Gate Session")
+aiSessionStart = input.int(930,  "Session Start (HHMM)",                   group="AI Gate Session")
+aiSessionEnd   = input.int(1600, "Session End (HHMM)",                     group="AI Gate Session")
+
+// ── Display ─────────────────────────────────────────────────────────────────
+showZLEMA       = input.bool(true,  "Show ZLEMA Line",           group="Display")
+showUTBot       = input.bool(true,  "Show UT Bot Trail",         group="Display")
+showSignals     = input.bool(true,  "Show Buy/Sell Signals",     group="Display")
+showLabels      = input.bool(true,  "Show Signal Labels",        group="Display")
+showDashboard   = input.bool(true,  "Show Confluence Dashboard", group="Display")
+showBarColor    = input.bool(true,  "Color Bars by Trend",       group="Display")
+showSqueeze     = input.bool(true,  "Show Squeeze Dots",         group="Display")
+showExitWarning = input.bool(true,  "Show Exit Warnings",        group="Display")
+
+// ── Colors ──────────────────────────────────────────────────────────────────
+bullColor    = input.color(#00E676, "Bull Color",    group="Colors")
+bearColor    = input.color(#FF1744, "Bear Color",    group="Colors")
+neutralColor = input.color(#787B86, "Neutral Color", group="Colors")
+squeezeColor = input.color(#FF9800, "Squeeze Color", group="Colors")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LAYER 1: ZLEMA MICRO-TREND
+// ══════════════════════════════════════════════════════════════════════════════
+lag = math.floor((zlPeriod - 1) / 2)
+zlSrc = 2 * close - close[lag]
+zlemaVal = ta.ema(zlSrc, zlPeriod)
+zlSlope = zlemaVal - zlemaVal[zlSlopeLB]
+trendUp   = zlSlope > 0
+trendDown = zlSlope < 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LAYER 2: WAVETREND
+// ══════════════════════════════════════════════════════════════════════════════
+hlc3Src = hlc3
+esa = ta.ema(hlc3Src, wtChannel)
+dd = ta.ema(math.abs(hlc3Src - esa), wtChannel)
+ci = (hlc3Src - esa) / (0.015 * dd)
+wt1 = ta.ema(ci, wtAvg)
+wt2 = ta.sma(wt1, wtMa)
+
+wtNotOB      = wt1 < wtOB
+wtAboveShort = wt1 > wtOBShort
+
+wtBullCross = ta.crossover(wt1, wt2)
+wtBearCross = ta.crossunder(wt1, wt2)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LAYER 3: SQUEEZE MOMENTUM
+// ══════════════════════════════════════════════════════════════════════════════
+basis   = ta.sma(close, sqBBPeriod)
+devBB   = sqBBMult * ta.stdev(close, sqBBPeriod)
+upperBB = basis + devBB
+lowerBB = basis - devBB
+
+maKC    = ta.ema(close, sqKCPeriod)
+rangeKC = ta.atr(sqKCPeriod)
+upperKC = maKC + sqKCMult * rangeKC
+lowerKC = maKC - sqKCMult * rangeKC
+
+sqOn  = lowerBB > lowerKC and upperBB < upperKC
+sqOff = not sqOn
+
+highH  = ta.highest(high, sqBBPeriod)
+lowL   = ta.lowest(low, sqBBPeriod)
+sqMom  = ta.linreg(close - (highH + lowL) / 2.0, sqBBPeriod, 0)
+
+momBull = sqMom > 0
+momBear = sqMom < 0
+
+momFlippedBear = momBull[1] and momBear
+momFlippedBull = momBear[1] and momBull
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LAYER 4: EFFICIENCY RATIO
+// ══════════════════════════════════════════════════════════════════════════════
+netChange  = math.abs(close - close[erPeriod])
+sumChanges = math.sum(math.abs(close - close[1]), erPeriod)
+erVal      = sumChanges != 0 ? netChange / sumChanges : 0.0
+trending   = erVal > erThresh
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LAYER 5: UT BOT (TRIGGER)
+// ══════════════════════════════════════════════════════════════════════════════
+utATRVal = ta.atr(utATR)
+utNLoss  = utKey * utATRVal
+
+var float utTrailLine = na
+utTrailLine := close > nz(utTrailLine[1], close) ? math.max(nz(utTrailLine[1], close), close - utNLoss) :
+               close < nz(utTrailLine[1], close) ? math.min(nz(utTrailLine[1], close), close + utNLoss) :
+               close - utNLoss
+
+utBuy  = ta.crossover(close, utTrailLine)
+utSell = ta.crossunder(close, utTrailLine)
+
+utFlippedBear = close < utTrailLine and close[1] >= nz(utTrailLine[1], close[1])
+utFlippedBull = close > utTrailLine and close[1] <= nz(utTrailLine[1], close[1])
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STOCH RSI (EXIT SCORING)
+// ══════════════════════════════════════════════════════════════════════════════
+rsi14Raw     = ta.rsi(close, stochLen)
+stochRsiK    = ta.sma(ta.stoch(rsi14Raw, rsi14Raw, rsi14Raw, stochLen), stochK)
+stochRsiD    = ta.sma(stochRsiK, stochD)
+stochBullX   = ta.crossover(stochRsiK, stochRsiD)
+stochBearX   = ta.crossunder(stochRsiK, stochRsiD)
+stochInOB    = stochRsiK > stochOB
+stochInOS    = stochRsiK < stochOS
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFLUENCE SCORING
+// ══════════════════════════════════════════════════════════════════════════════
+f1_bull = trendUp
+f1_bear = trendDown
+f2_bull = wtNotOB and momBull
+f2_bear = wtAboveShort and momBear
+f3_bull = sqOff
+f3_bear = sqOff
+f4_bull = trending
+f4_bear = trending
+
+bullFilterCount = (f1_bull ? 1 : 0) + (f2_bull ? 1 : 0) + (f3_bull ? 1 : 0) + (f4_bull ? 1 : 0)
+bearFilterCount = (f1_bear ? 1 : 0) + (f2_bear ? 1 : 0) + (f3_bear ? 1 : 0) + (f4_bear ? 1 : 0)
+
+longRaw  = utBuy  and bullFilterCount >= minLayers
+shortRaw = utSell and bearFilterCount >= minLayers
+
+bullAllowed = (bullFilterCount == 2 and show2of4) or (bullFilterCount == 3 and show3of4) or (bullFilterCount == 4 and show4of4)
+bearAllowed = (bearFilterCount == 2 and show2of4) or (bearFilterCount == 3 and show3of4) or (bearFilterCount == 4 and show4of4)
+
+longSignal  = longRaw  and bullAllowed
+shortSignal = shortRaw and bearAllowed
+
+longExitWarn  = wt1 > wtOB
+shortExitWarn = wt1 < wtOSShort
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI GATE — ADDITIONAL INDICATORS
+// ══════════════════════════════════════════════════════════════════════════════
+
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+ema20Slope5 = ema20 - ema20[5]
+priceAboveEma20 = close > ema20
+priceAboveEma50 = close > ema50
+
+htfEma20 = request.security(syminfo.tickerid, aiHTF, ta.ema(close, 20))
+htfEma50 = request.security(syminfo.tickerid, aiHTF, ta.ema(close, 50))
+htfBullish = htfEma20 > htfEma50
+htfBearish = htfEma20 < htfEma50
+htfBias = htfBullish ? "bullish" : htfBearish ? "bearish" : "neutral"
+
+rsi14 = ta.rsi(close, 14)
+
+rsiDivLB       = 10
+priceLow10     = ta.lowest(low, rsiDivLB)
+priceHigh10    = ta.highest(high, rsiDivLB)
+rsiLow10       = ta.lowest(rsi14, rsiDivLB)
+rsiHigh10      = ta.highest(rsi14, rsiDivLB)
+rsiBullDiv     = low <= priceLow10 and rsi14 > rsiLow10
+rsiBearDiv     = high >= priceHigh10 and rsi14 < rsiHigh10
+
+cci20 = ta.cci(close, 20)
+
+atr14 = ta.atr(14)
+
+var float sessionOpen = na
+isNewSession = ta.change(time("D")) != 0
+if isNewSession
+    sessionOpen := open
+sessionMoveAbs = math.abs(close - nz(sessionOpen, close))
+atrConsumedPct = atr14 > 0 ? sessionMoveAbs / atr14 : 0.0
+
+bbBasis20  = ta.sma(close, 20)
+bbDev20    = 2.0 * ta.stdev(close, 20)
+bbUpper20  = bbBasis20 + bbDev20
+bbLower20  = bbBasis20 - bbDev20
+bbRange20  = bbUpper20 - bbLower20
+bbPctB     = bbRange20 != 0 ? (close - bbLower20) / bbRange20 : 0.5
+
+vwapVal      = ta.vwap(hlc3)
+vwapDistTicks = (close - vwapVal) / syminfo.mintick
+
+vol20Avg  = ta.sma(volume, 20)
+volRatio  = vol20Avg > 0 ? volume / vol20Avg : 1.0
+
+barRange        = high - low
+barBody         = math.abs(close - open)
+barBodyPct      = barRange > 0 ? barBody / barRange : 0.0
+barUpperWickPct = barRange > 0 ? (high - math.max(close, open)) / barRange : 0.0
+barLowerWickPct = barRange > 0 ? (math.min(close, open) - low) / barRange : 0.0
+barIsBullish    = close > open
+barRangeVsATR   = atr14 > 0 ? barRange / atr14 : 1.0
+
+prev3Pattern = (close[3] < close[4] ? "L" : "H") + (close[2] < close[3] ? "L" : "H") + (close[1] < close[2] ? "L" : "H")
+
+consHigh10      = ta.highest(high, 10)
+consLow10       = ta.lowest(low, 10)
+consRangeTicks  = (consHigh10 - consLow10) / syminfo.mintick
+consRangeVsATR  = atr14 > 0 ? (consHigh10 - consLow10) / atr14 : 1.0
+
+var float sessHigh = na
+var float sessLow  = na
+if isNewSession
+    sessHigh := high
+    sessLow  := low
+else
+    sessHigh := math.max(nz(sessHigh, high), high)
+    sessLow  := math.min(nz(sessLow, low), low)
+
+distSessHighTicks = (close - sessHigh) / syminfo.mintick
+distSessLowTicks  = (close - sessLow)  / syminfo.mintick
+
+isSwingHigh = high == ta.highest(high, 5) and high > high[1] and high > high[2]
+isSwingLow  = low == ta.lowest(low, 5) and low < low[1] and low < low[2]
+
+var int barsSinceSwingHigh = 0
+var int barsSinceSwingLow  = 0
+barsSinceSwingHigh := isSwingHigh ? 0 : barsSinceSwingHigh + 1
+barsSinceSwingLow  := isSwingLow  ? 0 : barsSinceSwingLow  + 1
+
+c1 = close[4]
+c2 = close[3]
+c3 = close[2]
+c4 = close[1]
+c5 = close
+
+currentHour   = hour(time, aiSessionTZ)
+currentMinute = minute(time, aiSessionTZ)
+currentHHMM   = currentHour * 100 + currentMinute
+
+sessionBucket = currentHHMM < 1000  ? "open_drive" :
+                currentHHMM < 1130  ? "morning" :
+                currentHHMM < 1330  ? "midday_chop" :
+                currentHHMM < 1500  ? "afternoon" :
+                                      "close"
+
+dow = dayofweek(time, aiSessionTZ)
+dowStr = dow == dayofweek.monday    ? "Mon" :
+         dow == dayofweek.tuesday   ? "Tue" :
+         dow == dayofweek.wednesday ? "Wed" :
+         dow == dayofweek.thursday  ? "Thu" :
+         dow == dayofweek.friday    ? "Fri" :
+         dow == dayofweek.saturday  ? "Sat" : "Sun"
+
+maintStartHHMM = 1700
+minsInDay       = currentHour * 60 + currentMinute
+maintStartMins  = 17 * 60
+minsToMaint     = maintStartMins > minsInDay ? maintStartMins - minsInDay : 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// POSITION TRACKING (local — relay ignores if no AI position exists)
+// ══════════════════════════════════════════════════════════════════════════════
+
+var bool   inPosition   = false
+var string posDirection  = ""
+var float  entryPrice    = na
+var int    entryBarIdx   = 0
+
+if longSignal and not inPosition
+    inPosition   := true
+    posDirection := "LONG"
+    entryPrice   := close
+    entryBarIdx  := bar_index
+
+if shortSignal and not inPosition
+    inPosition   := true
+    posDirection := "SHORT"
+    entryPrice   := close
+    entryBarIdx  := bar_index
+
+if longSignal and inPosition and posDirection == "SHORT"
+    posDirection := "LONG"
+    entryPrice   := close
+    entryBarIdx  := bar_index
+
+if shortSignal and inPosition and posDirection == "LONG"
+    posDirection := "SHORT"
+    entryPrice   := close
+    entryBarIdx  := bar_index
+
+barsInTrade = inPosition ? bar_index - entryBarIdx : 0
+
+unrealizedTicks = inPosition ?
+     (posDirection == "LONG" ? (close - entryPrice) / syminfo.mintick : (entryPrice - close) / syminfo.mintick) :
+     0.0
+unrealizedDollars = unrealizedTicks * aiTickValue
+
+var float maxFavorable = 0.0
+var float maxAdverse   = 0.0
+if inPosition
+    maxFavorable := math.max(maxFavorable, unrealizedTicks)
+    maxAdverse   := math.min(maxAdverse, unrealizedTicks)
+else
+    maxFavorable := 0.0
+    maxAdverse   := 0.0
+
+if inPosition and barsInTrade >= aiMaxBarsHold
+    inPosition := false
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EXIT SCORING (computed on chart, sent to AI for reference)
+// ══════════════════════════════════════════════════════════════════════════════
+
+zlemaFlippedAgainst = (posDirection == "LONG" and trendDown and trendUp[1]) or
+                      (posDirection == "SHORT" and trendUp and trendDown[1])
+
+utBotFlippedAgainst = (posDirection == "LONG" and utFlippedBear) or
+                      (posDirection == "SHORT" and utFlippedBull)
+
+zlemaWentNeutral = not trendUp and not trendDown and (trendUp[1] or trendDown[1])
+
+stochCrossedAgainst = (posDirection == "LONG" and stochBearX) or
+                      (posDirection == "SHORT" and stochBullX)
+
+momFlippedAgainst = (posDirection == "LONG" and momFlippedBear) or
+                    (posDirection == "SHORT" and momFlippedBull)
+
+exitWarnFired = (posDirection == "LONG" and longExitWarn and not longExitWarn[1]) or
+                (posDirection == "SHORT" and shortExitWarn and not shortExitWarn[1])
+
+stochAtExtreme = (posDirection == "LONG" and stochInOB) or
+                 (posDirection == "SHORT" and stochInOS)
+
+exitScore = (zlemaFlippedAgainst ? 3 : 0) +
+            (utBotFlippedAgainst ? 3 : 0) +
+            (zlemaWentNeutral    ? 2 : 0) +
+            (stochCrossedAgainst ? 2 : 0) +
+            (momFlippedAgainst   ? 2 : 0) +
+            (exitWarnFired       ? 2 : 0) +
+            (stochAtExtreme      ? 1 : 0)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// JSON BUILDERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+f_quote(string val) =>
+    '"' + val + '"'
+
+f_indicators() =>
+    ',"f_zlema_trend_bull":' + (f1_bull ? "true" : "false") +
+    ',"f_zlema_trend_bear":' + (f1_bear ? "true" : "false") +
+    ',"f_wt_mom_bull":' + (f2_bull ? "true" : "false") +
+    ',"f_wt_mom_bear":' + (f2_bear ? "true" : "false") +
+    ',"f_squeeze_off":' + (sqOff ? "true" : "false") +
+    ',"f_trending":' + (trending ? "true" : "false") +
+    ',"zlema":' + str.tostring(math.round(zlemaVal, 2)) +
+    ',"zl_slope":' + str.tostring(math.round(zlSlope, 4)) +
+    ',"wt1":' + str.tostring(math.round(wt1, 2)) +
+    ',"wt2":' + str.tostring(math.round(wt2, 2)) +
+    ',"wt_bull_cross":' + (wtBullCross ? "true" : "false") +
+    ',"wt_bear_cross":' + (wtBearCross ? "true" : "false") +
+    ',"sq_mom":' + str.tostring(math.round(sqMom, 4)) +
+    ',"squeeze_on":' + (sqOn ? "true" : "false") +
+    ',"er_val":' + str.tostring(math.round(erVal, 4)) +
+    ',"ut_trail":' + str.tostring(math.round(utTrailLine, 2)) +
+    ',"ema20":' + str.tostring(math.round(ema20, 2)) +
+    ',"ema50":' + str.tostring(math.round(ema50, 2)) +
+    ',"ema20_slope5":' + str.tostring(math.round(ema20Slope5, 4)) +
+    ',"price_above_ema20":' + (priceAboveEma20 ? "true" : "false") +
+    ',"price_above_ema50":' + (priceAboveEma50 ? "true" : "false") +
+    ',"htf_bias":' + f_quote(htfBias) +
+    ',"rsi14":' + str.tostring(math.round(rsi14, 2)) +
+    ',"rsi_bull_div":' + (rsiBullDiv ? "true" : "false") +
+    ',"rsi_bear_div":' + (rsiBearDiv ? "true" : "false") +
+    ',"cci20":' + str.tostring(math.round(cci20, 2)) +
+    ',"stoch_rsi_k":' + str.tostring(math.round(stochRsiK, 2)) +
+    ',"stoch_rsi_d":' + str.tostring(math.round(stochRsiD, 2)) +
+    ',"stoch_in_ob":' + (stochInOB ? "true" : "false") +
+    ',"stoch_in_os":' + (stochInOS ? "true" : "false") +
+    ',"atr14":' + str.tostring(math.round(atr14, 4)) +
+    ',"atr_consumed_pct":' + str.tostring(math.round(atrConsumedPct, 4)) +
+    ',"bb_pctb":' + str.tostring(math.round(bbPctB, 4)) +
+    ',"bar_range_vs_atr":' + str.tostring(math.round(barRangeVsATR, 4)) +
+    ',"vol_ratio":' + str.tostring(math.round(volRatio, 2)) +
+    ',"bar_body_pct":' + str.tostring(math.round(barBodyPct, 4)) +
+    ',"bar_upper_wick_pct":' + str.tostring(math.round(barUpperWickPct, 4)) +
+    ',"bar_lower_wick_pct":' + str.tostring(math.round(barLowerWickPct, 4)) +
+    ',"bar_is_bullish":' + (barIsBullish ? "true" : "false") +
+    ',"prev_3_pattern":' + f_quote(prev3Pattern) +
+    ',"vwap_dist_ticks":' + str.tostring(math.round(vwapDistTicks, 1)) +
+    ',"dist_sess_high_ticks":' + str.tostring(math.round(distSessHighTicks, 1)) +
+    ',"dist_sess_low_ticks":' + str.tostring(math.round(distSessLowTicks, 1)) +
+    ',"bars_since_swing_high":' + str.tostring(barsSinceSwingHigh) +
+    ',"bars_since_swing_low":' + str.tostring(barsSinceSwingLow) +
+    ',"cons_range_ticks":' + str.tostring(math.round(consRangeTicks, 1)) +
+    ',"cons_range_vs_atr":' + str.tostring(math.round(consRangeVsATR, 4)) +
+    ',"last_5_closes":[' + str.tostring(math.round(c1, 2)) + ',' + str.tostring(math.round(c2, 2)) + ',' + str.tostring(math.round(c3, 2)) + ',' + str.tostring(math.round(c4, 2)) + ',' + str.tostring(math.round(c5, 2)) + ']' +
+    ',"session_bucket":' + f_quote(sessionBucket) +
+    ',"day_of_week":' + f_quote(dowStr) +
+    ',"mins_to_maintenance":' + str.tostring(minsToMaint) +
+    ',"price":' + str.tostring(math.round(close, 2))
+
+// ── Entry payload ───────────────────────────────────────────────────────────
+f_entryPayload(string signalDir, int filterCount) =>
+    '{' +
+    '"alert_type":"entry"' +
+    ',"relay_user":' + f_quote(aiRelayUser) +
+    ',"relay_id":' + f_quote(aiRelayId) +
+    ',"account":' + f_quote(aiAccount) +
+    ',"qty":' + str.tostring(aiQty) +
+    ',"strategy_tag":' + f_quote(aiStrategyTag) +
+    ',"signal":' + f_quote(signalDir) +
+    ',"strategy":' + f_quote("PrecisionScalp") +
+    ',"strategy_type":' + f_quote(aiStrategyType) +
+    ',"instrument":' + f_quote(syminfo.ticker) +
+    ',"timeframe":' + f_quote(timeframe.period) +
+    ',"target_ticks":' + str.tostring(aiTargetTicks) +
+    ',"stop_ticks":' + str.tostring(aiStopTicks) +
+    ',"hard_stop_ticks":' + str.tostring(aiHardStopTicks) +
+    ',"rr":' + str.tostring(math.round(aiTargetTicks / math.max(aiStopTicks, 1), 2)) +
+    ',"confluence_score":' + str.tostring(filterCount) +
+    ',"tick_value":' + str.tostring(aiTickValue) +
+    f_indicators() +
+    '}'
+
+// ── Manage payload (every bar while in trade) ───────────────────────────────
+f_managePayload() =>
+    '{' +
+    '"alert_type":"manage"' +
+    ',"relay_user":' + f_quote(aiRelayUser) +
+    ',"relay_id":' + f_quote(aiRelayId) +
+    ',"account":' + f_quote(aiAccount) +
+    ',"instrument":' + f_quote(syminfo.ticker) +
+    ',"strategy":' + f_quote("PrecisionScalp") +
+    ',"position_direction":' + f_quote(posDirection) +
+    ',"entry_price":' + str.tostring(math.round(entryPrice, 2)) +
+    ',"bars_in_trade":' + str.tostring(barsInTrade) +
+    ',"unrealized_ticks":' + str.tostring(math.round(unrealizedTicks, 1)) +
+    ',"unrealized_dollars":' + str.tostring(math.round(unrealizedDollars, 2)) +
+    ',"max_favorable_ticks":' + str.tostring(math.round(maxFavorable, 1)) +
+    ',"max_adverse_ticks":' + str.tostring(math.round(maxAdverse, 1)) +
+    ',"tick_value":' + str.tostring(aiTickValue) +
+    ',"hard_stop_ticks":' + str.tostring(aiHardStopTicks) +
+    ',"max_bars_hold":' + str.tostring(aiMaxBarsHold) +
+    ',"exit_score":' + str.tostring(exitScore) +
+    ',"exit_zlema_flipped":' + (zlemaFlippedAgainst ? "true" : "false") +
+    ',"exit_utbot_flipped":' + (utBotFlippedAgainst ? "true" : "false") +
+    ',"exit_zlema_neutral":' + (zlemaWentNeutral ? "true" : "false") +
+    ',"exit_stoch_crossed":' + (stochCrossedAgainst ? "true" : "false") +
+    ',"exit_mom_flipped":' + (momFlippedAgainst ? "true" : "false") +
+    ',"exit_warn_fired":' + (exitWarnFired ? "true" : "false") +
+    ',"exit_stoch_extreme":' + (stochAtExtreme ? "true" : "false") +
+    f_indicators() +
+    '}'
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+if longSignal
+    alert(f_entryPayload("LONG", bullFilterCount), alert.freq_once_per_bar_close)
+
+if shortSignal
+    alert(f_entryPayload("SHORT", bearFilterCount), alert.freq_once_per_bar_close)
+
+// Manage alerts: every bar close while in trade, skip signal bar itself
+if inPosition and barsInTrade > 0
+    alert(f_managePayload(), alert.freq_once_per_bar_close)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VISUALS
+// ══════════════════════════════════════════════════════════════════════════════
+
+zlColor = trendUp ? bullColor : trendDown ? bearColor : neutralColor
+plot(showZLEMA ? zlemaVal : na, "ZLEMA", color=zlColor, linewidth=2)
+
+utColor = close > utTrailLine ? bullColor : bearColor
+plot(showUTBot ? utTrailLine : na, "UT Bot Trail", color=utColor, linewidth=1, style=plot.style_circles)
+
+plotshape(showSignals and longSignal,  style=shape.triangleup,   location=location.belowbar, color=bullColor, size=size.small, title="Buy Signal")
+plotshape(showSignals and shortSignal, style=shape.triangledown, location=location.abovebar, color=bearColor, size=size.small, title="Sell Signal")
+
+if showLabels and longSignal
+    label.new(bar_index, low, "BUY\n" + str.tostring(bullFilterCount) + "/4", style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small)
+if showLabels and shortSignal
+    label.new(bar_index, high, "SELL\n" + str.tostring(bearFilterCount) + "/4", style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small)
+
+plotshape(showExitWarning and longExitWarn and not longExitWarn[1], style=shape.xcross, location=location.abovebar, color=color.new(squeezeColor, 30), size=size.tiny, title="Long Exit Warning")
+plotshape(showExitWarning and shortExitWarn and not shortExitWarn[1], style=shape.xcross, location=location.belowbar, color=color.new(squeezeColor, 30), size=size.tiny, title="Short Exit Warning")
+
+plotshape(showSqueeze and sqOn, style=shape.circle, location=location.bottom, color=squeezeColor, size=size.tiny, title="Squeeze Active")
+
+trendBarColor = trendUp and close > utTrailLine ? bullColor : trendDown and close < utTrailLine ? bearColor : neutralColor
+barcolor(showBarColor ? trendBarColor : na, title="Trend Bar Color")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════════
+if showDashboard and barstate.islast
+    var table dash = table.new(position.top_right, 3, 7, bgcolor=color.new(#1E1E1E, 10), border_width=1, border_color=color.new(#333333, 0))
+
+    table.cell(dash, 0, 0, "QTP Precision Scalp AI", text_color=color.white, text_size=size.normal, bgcolor=color.new(#2962FF, 10))
+    table.merge_cells(dash, 0, 0, 2, 0)
+
+    table.cell(dash, 0, 1, "Filter",    text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 1, "Bull",      text_color=bullColor,  text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 1, "Bear",      text_color=bearColor,  text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 2, "ZLEMA Trend",  text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 2, f1_bull ? "✓" : "✗", text_color=f1_bull ? bullColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 2, f1_bear ? "✓" : "✗", text_color=f1_bear ? bearColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 3, "WT + Mom",    text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 3, f2_bull ? "✓" : "✗", text_color=f2_bull ? bullColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 3, f2_bear ? "✓" : "✗", text_color=f2_bear ? bearColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 4, "Squeeze Off", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 4, f3_bull ? "✓" : "✗", text_color=f3_bull ? bullColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 4, f3_bear ? "✓" : "✗", text_color=f3_bear ? bearColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 5, "Trending",    text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 5, f4_bull ? "✓" : "✗", text_color=f4_bull ? bullColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 5, f4_bear ? "✓" : "✗", text_color=f4_bear ? bearColor : neutralColor, text_size=size.small, text_halign=text.align_center)
+
+    bullScoreText = str.tostring(bullFilterCount) + "/4"
+    bearScoreText = str.tostring(bearFilterCount) + "/4"
+    bullScoreColor = bullFilterCount >= minLayers ? bullColor : neutralColor
+    bearScoreColor = bearFilterCount >= minLayers ? bearColor : neutralColor
+
+    table.cell(dash, 0, 6, "Score",       text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 6, bullScoreText, text_color=bullScoreColor, text_size=size.normal, text_halign=text.align_center)
+    table.cell(dash, 2, 6, bearScoreText, text_color=bearScoreColor, text_size=size.normal, text_halign=text.align_center)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LEGACY
+// ══════════════════════════════════════════════════════════════════════════════
+alertcondition(longSignal,  "QTP Buy Signal",          "QTP Precision Scalp — BUY signal ({{ticker}} {{interval}})")
+alertcondition(shortSignal, "QTP Sell Signal",         "QTP Precision Scalp — SELL signal ({{ticker}} {{interval}})")
+alertcondition(longSignal or shortSignal, "QTP Any Signal", "QTP Precision Scalp — {{ticker}} {{interval}} signal fired")
+alertcondition(longExitWarn and not longExitWarn[1],   "QTP Long Exit Warning",  "QTP Precision Scalp — Long exit warning (WT overbought)")
+alertcondition(shortExitWarn and not shortExitWarn[1], "QTP Short Exit Warning", "QTP Precision Scalp — Short exit warning (WT oversold)")
+alertcondition(sqOn and not sqOn[1], "QTP Squeeze Fired", "QTP Precision Scalp — Squeeze detected ({{ticker}} {{interval}})")
+
+plot(longSignal  ? 1.0 : 0.0, "BOT: longSignal",      display=display.none)
+plot(shortSignal ? 1.0 : 0.0, "BOT: shortSignal",     display=display.none)
+plot(float(bullFilterCount),   "BOT: bullFilterCount", display=display.none)
+plot(float(bearFilterCount),   "BOT: bearFilterCount", display=display.none)
+plot(longExitWarn  ? 1.0 : 0.0, "BOT: longExitWarn",  display=display.none)
+plot(shortExitWarn ? 1.0 : 0.0, "BOT: shortExitWarn", display=display.none)
