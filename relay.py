@@ -3,6 +3,7 @@ import os
 import json
 import re
 import sqlite3
+import asyncio
 
 import httpx
 
@@ -987,14 +988,10 @@ def build_ct_fields(payload: dict) -> dict:
 
 @app.post("/webhook/ai")
 async def webhook_ai(request: Request):
-    """AI Gate webhook — receives JSON from Pine Script, gates through LLM.
+    """AI Gate webhook — receives JSON from Pine Script.
 
-    Flow:
-        1. Parse JSON payload from TradingView alert
-        2. Validate required routing fields
-        3. Call Anthropic API for conviction decision
-        4. If AGREE → build CT fields → process_signal() → CrossTrade
-        5. If DISAGREE/ERROR/TIMEOUT → log and reject
+    Returns 200 immediately to avoid TradingView timeout.
+    AI processing happens in the background.
     """
     ai_gate_init_db()
 
@@ -1010,16 +1007,37 @@ async def webhook_ai(request: Request):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
-    # --- Validate routing fields ---
-    # Route manage alerts to the manage handler (both come via same TradingView webhook)
     alert_type = payload.get("alert_type", "entry")
-    if alert_type == "manage":
-        return await _handle_manage(payload, body_text)
 
-    missing = REQUIRED_ROUTING_FIELDS - set(payload.keys())
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing fields: {', '.join(missing)}")
+    # Quick validation before returning
+    if alert_type == "entry":
+        missing = REQUIRED_ROUTING_FIELDS - set(payload.keys())
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Missing fields: {', '.join(missing)}")
+        relay_user = payload.get("relay_user", "")
+        user = db.get_user(relay_user)
+        if not user:
+            raise HTTPException(status_code=400, detail=f"Unknown relay_user: {relay_user}")
 
+    # Fire background task and return immediately
+    asyncio.create_task(_process_ai_alert(payload, body_text, alert_type))
+
+    return JSONResponse(content={"status": "received", "alert_type": alert_type})
+
+
+async def _process_ai_alert(payload: dict, body_text: str, alert_type: str):
+    """Background worker — processes entry or manage alerts asynchronously."""
+    try:
+        if alert_type == "manage":
+            await _handle_manage(payload, body_text)
+        else:
+            await _handle_entry(payload, body_text)
+    except Exception as e:
+        logger.error(f"Background AI processing error: {e}")
+
+
+async def _handle_entry(payload: dict, body_text: str):
+    """Process an entry signal through the AI gate."""
     relay_user = payload["relay_user"]
     relay_id = payload["relay_id"]
     account = payload["account"]
@@ -1027,11 +1045,6 @@ async def webhook_ai(request: Request):
     signal = payload["signal"]
     strategy = payload.get("strategy", "unknown")
     confluence = payload.get("confluence_score", 0)
-
-    # --- Verify user exists ---
-    user = db.get_user(relay_user)
-    if not user:
-        raise HTTPException(status_code=400, detail=f"Unknown relay_user: {relay_user}")
 
     logger.info(f"[{relay_user}/{relay_id}] AI Gate received {signal} signal for {instrument}")
 
@@ -1105,15 +1118,6 @@ async def webhook_ai(request: Request):
         alert_type="entry"
     )
 
-    return JSONResponse(content={
-        "ai_decision": ai_decision,
-        "ai_reason": ai_reason,
-        "ai_latency_ms": ai_latency_ms,
-        "relay_result": relay_result,
-        "relay_details": relay_details,
-        "dry_run": AI_DRY_RUN
-    })
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI GATE — MANAGE ENDPOINT (per-bar exit management)
@@ -1121,7 +1125,7 @@ async def webhook_ai(request: Request):
 
 @app.post("/webhook/ai/manage")
 async def webhook_ai_manage(request: Request):
-    """AI Manage webhook — direct endpoint (also called internally from /webhook/ai)."""
+    """AI Manage webhook — direct endpoint. Returns immediately, processes in background."""
     body = await request.body()
     body_text = body.decode("utf-8").strip()
     if not body_text:
@@ -1130,7 +1134,8 @@ async def webhook_ai_manage(request: Request):
         payload = json.loads(body_text)
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
-    return await _handle_manage(payload, body_text)
+    asyncio.create_task(_handle_manage(payload, body_text))
+    return JSONResponse(content={"status": "received", "alert_type": "manage"})
 
 
 async def _handle_manage(payload: dict, body_text: str):
