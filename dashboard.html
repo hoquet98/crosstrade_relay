@@ -30,6 +30,8 @@
     --forwarded: #00e676;
     --blocked: #ff9800;
     --rejected: #ff1744;
+    --profit: #00e676;
+    --loss: #ff1744;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -58,7 +60,6 @@
     padding: 24px 32px;
   }
 
-  /* ── Header ── */
   .header {
     display: flex;
     align-items: center;
@@ -76,39 +77,25 @@
     border-radius: 10px;
     display: flex; align-items: center; justify-content: center;
     font-family: 'JetBrains Mono', monospace;
-    font-weight: 700;
-    font-size: 18px;
-    color: white;
+    font-weight: 700; font-size: 18px; color: white;
     box-shadow: 0 4px 20px var(--accent-glow);
   }
 
-  .header h1 {
-    font-size: 22px;
-    font-weight: 600;
-    letter-spacing: -0.3px;
-  }
-
+  .header h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
   .header h1 span { color: var(--text-dim); font-weight: 300; }
 
+  .header-right { display: flex; align-items: center; gap: 10px; }
+
   .live-dot {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: var(--text-secondary);
-    padding: 6px 12px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 20px;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text-secondary); padding: 6px 12px;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 20px;
   }
 
   .live-dot::before {
-    content: '';
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--agree);
-    animation: pulse 2s ease-in-out infinite;
+    content: ''; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--agree); animation: pulse 2s ease-in-out infinite;
   }
 
   @keyframes pulse {
@@ -116,401 +103,166 @@
     50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(0, 230, 118, 0); }
   }
 
-  /* ── Stats Row ── */
+  .mode-badge {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.5px; padding: 5px 14px; border-radius: 20px; text-transform: uppercase;
+  }
+
+  .mode-dry-run { background: rgba(255, 152, 0, 0.1); color: var(--timeout); border: 1px solid rgba(255, 152, 0, 0.3); }
+  .mode-live { background: rgba(0, 230, 118, 0.1); color: var(--agree); border: 1px solid rgba(0, 230, 118, 0.3); }
+
   .stats-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-    margin-bottom: 28px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 28px;
   }
 
   .stat-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px 20px;
-    transition: border-color 0.2s;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; transition: border-color 0.2s;
   }
 
   .stat-card:hover { border-color: var(--border-accent); }
+
   .stat-label {
-    font-size: 11px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--text-dim);
-    margin-bottom: 8px;
+    font-size: 11px; font-weight: 500; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--text-dim); margin-bottom: 8px;
   }
 
   .stat-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 28px;
-    font-weight: 700;
-    letter-spacing: -1px;
+    font-family: 'JetBrains Mono', monospace; font-size: 28px;
+    font-weight: 700; letter-spacing: -1px;
   }
 
   .stat-value.agree { color: var(--agree); }
   .stat-value.disagree { color: var(--disagree); }
   .stat-value.timeout { color: var(--timeout); }
   .stat-value.neutral { color: var(--text-primary); }
-  .stat-sub {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 4px;
-  }
+  .stat-value.profit { color: var(--profit); }
+  .stat-value.loss { color: var(--loss); }
+  .stat-sub { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
-  /* ── Section Titles ── */
   .section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 14px;
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
   }
 
   .section-title {
-    font-size: 14px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--text-secondary);
+    font-size: 14px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1.5px; color: var(--text-secondary);
   }
 
   .refresh-btn {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: var(--text-dim);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 5px 12px;
-    cursor: pointer;
-    transition: all 0.2s;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim);
+    background: transparent; border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 12px; cursor: pointer; transition: all 0.2s;
   }
 
-  .refresh-btn:hover {
-    color: var(--text-secondary);
-    border-color: var(--border-accent);
-    background: var(--bg-card);
-  }
+  .refresh-btn:hover { color: var(--text-secondary); border-color: var(--border-accent); background: var(--bg-card); }
 
-  /* ── Decision Log ── */
   .log-table {
-    width: 100%;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-    margin-bottom: 32px;
+    width: 100%; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; margin-bottom: 32px;
   }
 
-  .log-table table {
-    width: 100%;
-    border-collapse: collapse;
-  }
+  .log-table table { width: 100%; border-collapse: collapse; }
 
   .log-table thead th {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--text-dim);
-    text-align: left;
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(255,255,255,0.01);
-    position: sticky;
-    top: 0;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 1.2px; color: var(--text-dim);
+    text-align: left; padding: 14px 16px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.01); position: sticky; top: 0;
   }
 
-  .log-table tbody tr {
-    border-bottom: 1px solid var(--border);
-    transition: background 0.15s;
-  }
-
+  .log-table tbody tr { border-bottom: 1px solid var(--border); transition: background 0.15s; }
   .log-table tbody tr:last-child { border-bottom: none; }
   .log-table tbody tr:hover { background: var(--bg-card-hover); }
+  .log-table td { font-size: 13px; padding: 12px 16px; vertical-align: middle; }
 
-  .log-table td {
-    font-size: 13px;
-    padding: 12px 16px;
-    vertical-align: middle;
-  }
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .time-cell { color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: nowrap; }
 
-  .mono {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-  }
-
-  .time-cell {
-    color: var(--text-dim);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    white-space: nowrap;
-  }
-
-  /* ── Badges ── */
   .badge {
-    display: inline-block;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    padding: 4px 10px;
-    border-radius: 5px;
-    text-transform: uppercase;
+    display: inline-block; font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+    padding: 4px 10px; border-radius: 5px; text-transform: uppercase;
   }
 
-  .badge-agree {
-    background: var(--agree-bg);
-    color: var(--agree);
-    border: 1px solid var(--agree-border);
-  }
+  .badge-agree { background: var(--agree-bg); color: var(--agree); border: 1px solid var(--agree-border); }
+  .badge-disagree { background: var(--disagree-bg); color: var(--disagree); border: 1px solid var(--disagree-border); }
+  .badge-timeout { background: var(--timeout-bg); color: var(--timeout); border: 1px solid rgba(255, 152, 0, 0.25); }
+  .badge-error { background: rgba(158,158,158,0.08); color: var(--error); border: 1px solid rgba(158,158,158,0.25); }
+  .badge-long { background: rgba(0, 230, 118, 0.06); color: var(--agree); border: 1px solid rgba(0, 230, 118, 0.15); }
+  .badge-short { background: rgba(255, 23, 68, 0.06); color: var(--disagree); border: 1px solid rgba(255, 23, 68, 0.15); }
+  .badge-exit { background: var(--timeout-bg); color: var(--timeout); border: 1px solid rgba(255, 152, 0, 0.25); }
+  .badge-hold { background: rgba(92, 107, 192, 0.08); color: var(--accent); border: 1px solid rgba(92, 107, 192, 0.25); }
+  .badge-safety_exit { background: var(--disagree-bg); color: var(--disagree); border: 1px solid var(--disagree-border); }
+  .badge-dry_run { color: var(--timeout); }
+  .badge-ai_rejected, .badge-ai_timeout, .badge-ai_error { color: var(--text-dim); }
+  .badge-blocked { color: var(--blocked); }
+  .badge-forwarded { color: var(--forwarded); }
+  .badge-open { background: rgba(92, 107, 192, 0.08); color: var(--accent); border: 1px solid rgba(92, 107, 192, 0.25); }
+  .badge-closed { background: rgba(158,158,158,0.06); color: var(--text-dim); border: 1px solid rgba(158,158,158,0.15); }
 
-  .badge-disagree {
-    background: var(--disagree-bg);
-    color: var(--disagree);
-    border: 1px solid var(--disagree-border);
-  }
+  .reason-cell { max-width: 320px; color: var(--text-secondary); font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reason-cell:hover { white-space: normal; overflow: visible; }
 
-  .badge-timeout {
-    background: var(--timeout-bg);
-    color: var(--timeout);
-    border: 1px solid rgba(255, 152, 0, 0.25);
-  }
-
-  .badge-error {
-    background: rgba(158,158,158,0.08);
-    color: var(--error);
-    border: 1px solid rgba(158,158,158,0.25);
-  }
-
-  .badge-long {
-    background: rgba(0, 230, 118, 0.06);
-    color: var(--agree);
-    border: 1px solid rgba(0, 230, 118, 0.15);
-  }
-
-  .badge-short {
-    background: rgba(255, 23, 68, 0.06);
-    color: var(--disagree);
-    border: 1px solid rgba(255, 23, 68, 0.15);
-  }
-
-  .badge-forwarded {
-    color: var(--forwarded);
-  }
-
-  .badge-ai_rejected, .badge-ai_timeout, .badge-ai_error {
-    color: var(--text-dim);
-  }
-
-  .badge-dry_run {
-    color: var(--timeout);
-  }
-
-  .badge-blocked {
-    color: var(--blocked);
-  }
-
-  /* ── Reason tooltip ── */
-  .reason-cell {
-    max-width: 320px;
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.4;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .reason-cell:hover {
-    white-space: normal;
-    overflow: visible;
-  }
-
-  /* ── Latency bar ── */
-  .latency-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .latency-fill {
-    height: 4px;
-    border-radius: 2px;
-    min-width: 4px;
-    max-width: 60px;
-    transition: width 0.3s;
-  }
-
+  .latency-bar { display: flex; align-items: center; gap: 6px; }
+  .latency-fill { height: 4px; border-radius: 2px; min-width: 4px; max-width: 60px; transition: width 0.3s; }
   .latency-fast { background: var(--agree); }
   .latency-mid { background: var(--timeout); }
   .latency-slow { background: var(--disagree); }
+  .latency-text { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim); }
 
-  .latency-text {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    color: var(--text-dim);
-  }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+  .empty-state .icon { font-size: 40px; margin-bottom: 12px; opacity: 0.4; }
 
-  /* ── Empty State ── */
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text-dim);
-  }
+  .pnl-positive { color: var(--profit); font-weight: 600; }
+  .pnl-negative { color: var(--loss); font-weight: 600; }
+  .pnl-zero { color: var(--text-dim); }
 
-  .empty-state .icon {
-    font-size: 40px;
-    margin-bottom: 12px;
-    opacity: 0.4;
-  }
-
-  /* ── Payload Modal ── */
-  .modal-overlay {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.7);
-    z-index: 100;
-    align-items: center;
-    justify-content: center;
-  }
-
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
   .modal-overlay.active { display: flex; }
+  .modal { background: var(--bg-card); border: 1px solid var(--border-accent); border-radius: 14px; max-width: 700px; width: 90%; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .modal-header h3 { font-size: 14px; font-weight: 600; }
+  .modal-close { background: none; border: none; color: var(--text-dim); font-size: 20px; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: all 0.2s; }
+  .modal-close:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+  .modal-body { padding: 20px; overflow-y: auto; }
+  .modal-body pre { font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.6; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; }
 
-  .modal {
-    background: var(--bg-card);
-    border: 1px solid var(--border-accent);
-    border-radius: 14px;
-    max-width: 700px;
-    width: 90%;
-    max-height: 80vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .modal-header h3 {
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .modal-close {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    font-size: 20px;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 6px;
-    transition: all 0.2s;
-  }
-
-  .modal-close:hover {
-    color: var(--text-primary);
-    background: var(--bg-card-hover);
-  }
-
-  .modal-body {
-    padding: 20px;
-    overflow-y: auto;
-  }
-
-  .modal-body pre {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    line-height: 1.6;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  /* ── Config ── */
   .config-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 24px;
-    padding: 14px 18px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    display: flex; align-items: center; gap: 12px; margin-bottom: 24px;
+    padding: 14px 18px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
   }
 
-  .config-bar label {
-    font-size: 11px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--text-dim);
-  }
+  .config-bar label { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); }
 
   .config-bar input, .config-bar select {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-primary);
-    padding: 6px 10px;
-    outline: none;
-    transition: border-color 0.2s;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-primary); padding: 6px 10px; outline: none; transition: border-color 0.2s;
   }
 
-  .config-bar input:focus, .config-bar select:focus {
-    border-color: var(--accent);
-  }
-
+  .config-bar input:focus, .config-bar select:focus { border-color: var(--accent); }
   .config-bar input { width: 60px; }
 
-  /* ── Score dots ── */
-  .score-dots {
-    display: flex;
-    gap: 3px;
-  }
-
-  .score-dot {
-    width: 8px; height: 8px;
-    border-radius: 2px;
-  }
-
+  .score-dots { display: flex; gap: 3px; }
+  .score-dot { width: 8px; height: 8px; border-radius: 2px; }
   .score-dot.active { background: var(--agree); }
   .score-dot.inactive { background: var(--border); }
 
-  .mode-badge {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    padding: 5px 14px;
-    border-radius: 20px;
-    text-transform: uppercase;
+  .tab-bar { display: flex; gap: 4px; margin-bottom: 20px; }
+  .tab-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim);
+    background: transparent; border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 18px; cursor: pointer; transition: all 0.2s;
   }
+  .tab-btn:hover { color: var(--text-secondary); border-color: var(--border-accent); }
+  .tab-btn.active { color: var(--text-primary); background: var(--bg-card); border-color: var(--accent); }
 
-  .mode-dry-run {
-    background: rgba(255, 152, 0, 0.1);
-    color: var(--timeout);
-    border: 1px solid rgba(255, 152, 0, 0.3);
-  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
 
-  .mode-live {
-    background: rgba(0, 230, 118, 0.1);
-    color: var(--agree);
-    border: 1px solid rgba(0, 230, 118, 0.3);
-  }
-
-  /* ── Responsive ── */
   @media (max-width: 768px) {
     .app { padding: 16px; }
     .stats-row { grid-template-columns: repeat(2, 1fr); }
@@ -523,17 +275,17 @@
 <div class="noise"></div>
 <div class="app">
 
-  <!-- Header -->
   <div class="header">
     <div class="header-left">
       <div class="logo">AI</div>
       <h1>AI Gate <span>— Trade Conviction Filter</span></h1>
     </div>
-    <div class="live-dot" id="liveStatus">Polling every <span id="intervalDisplay">5</span>s</div>
-    <div class="mode-badge mode-dry-run" id="modeBadge">DRY RUN</div>
+    <div class="header-right">
+      <div class="live-dot" id="liveStatus">Polling every <span id="intervalDisplay">5</span>s</div>
+      <div class="mode-badge mode-dry-run" id="modeBadge">DRY RUN</div>
+    </div>
   </div>
 
-  <!-- Config -->
   <div class="config-bar">
     <label>Refresh</label>
     <input type="number" id="pollInterval" value="5" min="2" max="60" style="width:50px"> <span style="color:var(--text-dim);font-size:11px">sec</span>
@@ -541,72 +293,69 @@
     <input type="number" id="logLimit" value="50" min="10" max="500">
     <label style="margin-left:16px">Filter</label>
     <select id="filterDecision">
-      <option value="">All</option>
+      <option value="">All Decisions</option>
       <option value="AGREE">Agree</option>
       <option value="DISAGREE">Disagree</option>
-      <option value="TIMEOUT">Timeout</option>
-      <option value="ERROR">Error</option>
+      <option value="EXIT">Exit</option>
+      <option value="HOLD">Hold</option>
+      <option value="SAFETY_EXIT">Safety Exit</option>
     </select>
   </div>
 
   <!-- Stats -->
   <div class="stats-row" id="statsRow">
-    <div class="stat-card">
-      <div class="stat-label">Total Signals</div>
-      <div class="stat-value neutral" id="statTotal">—</div>
+    <div class="stat-card"><div class="stat-label">Total Signals</div><div class="stat-value neutral" id="statTotal">-</div></div>
+    <div class="stat-card"><div class="stat-label">Agreed</div><div class="stat-value agree" id="statAgree">-</div><div class="stat-sub" id="statAgreeRate"></div></div>
+    <div class="stat-card"><div class="stat-label">Disagreed</div><div class="stat-value disagree" id="statDisagree">-</div></div>
+    <div class="stat-card"><div class="stat-label">Avg Latency</div><div class="stat-value neutral" id="statLatency">-</div><div class="stat-sub">ms</div></div>
+    <div class="stat-card"><div class="stat-label">Total P&L</div><div class="stat-value neutral" id="statPnl">-</div><div class="stat-sub" id="statPnlSub"></div></div>
+    <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value neutral" id="statWinRate">-</div><div class="stat-sub" id="statWinRateSub"></div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('decisions')">Decision Log</button>
+    <button class="tab-btn" onclick="switchTab('trades')">Trades</button>
+  </div>
+
+  <!-- Decision Log Tab -->
+  <div class="tab-content active" id="tab-decisions">
+    <div class="section-header">
+      <div class="section-title">Decision Log</div>
+      <button class="refresh-btn" onclick="fetchAll()">Refresh Now</button>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Agreed</div>
-      <div class="stat-value agree" id="statAgree">—</div>
-      <div class="stat-sub" id="statAgreeRate">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Disagreed</div>
-      <div class="stat-value disagree" id="statDisagree">—</div>
-      <div class="stat-sub" id="statDisagreeRate">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Timeouts</div>
-      <div class="stat-value timeout" id="statTimeout">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Avg Latency</div>
-      <div class="stat-value neutral" id="statLatency">—</div>
-      <div class="stat-sub">ms</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Agree Rate</div>
-      <div class="stat-value agree" id="statRate">—</div>
-      <div class="stat-sub">of total signals</div>
+    <div class="log-table">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Type</th><th>Strategy</th><th>Instrument</th><th>Signal</th>
+          <th>Score</th><th>AI Decision</th><th>Relay</th><th>Latency</th><th>Reason</th><th></th>
+        </tr></thead>
+        <tbody id="logBody">
+          <tr><td colspan="11" class="empty-state"><div class="icon">&#x23F3;</div>No signals yet</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
-  <!-- Decision Log -->
-  <div class="section-header">
-    <div class="section-title">Decision Log</div>
-    <button class="refresh-btn" onclick="fetchAll()">Refresh Now</button>
+  <!-- Trades Tab -->
+  <div class="tab-content" id="tab-trades">
+    <div class="section-header">
+      <div class="section-title">Trade History</div>
+      <button class="refresh-btn" onclick="fetchTrades()">Refresh Now</button>
+    </div>
+    <div class="log-table">
+      <table>
+        <thead><tr>
+          <th>Opened</th><th>Closed</th><th>Strategy</th><th>Instrument</th><th>Direction</th>
+          <th>Entry</th><th>Exit</th><th>Ticks</th><th>P&L</th><th>Bars</th><th>Status</th><th>Exit Reason</th>
+        </tr></thead>
+        <tbody id="tradesBody">
+          <tr><td colspan="12" class="empty-state"><div class="icon">&#x23F3;</div>No trades yet</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
-  <div class="log-table">
-    <table>
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>Strategy</th>
-          <th>Instrument</th>
-          <th>Signal</th>
-          <th>Score</th>
-          <th>AI Decision</th>
-          <th>Relay</th>
-          <th>Latency</th>
-          <th>Reason</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="logBody">
-        <tr><td colspan="10" class="empty-state"><div class="icon">⏳</div>No signals yet — waiting for first alert</td></tr>
-      </tbody>
-    </table>
-  </div>
+
 </div>
 
 <!-- Payload Modal -->
@@ -616,9 +365,7 @@
       <h3 id="modalTitle">Signal Payload</h3>
       <button class="modal-close" onclick="document.getElementById('modalOverlay').classList.remove('active')">&times;</button>
     </div>
-    <div class="modal-body">
-      <pre id="modalContent"></pre>
-    </div>
+    <div class="modal-body"><pre id="modalContent"></pre></div>
   </div>
 </div>
 
@@ -628,23 +375,25 @@
 
   function el(id) { return document.getElementById(id); }
 
-  // ── Fetch health / mode ──
+  // ── Tabs ──
+  function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    event.target.classList.add('active');
+    el('tab-' + tab).classList.add('active');
+    if (tab === 'trades') fetchTrades();
+  }
+
+  // ── Fetch health ──
   async function fetchHealth() {
     try {
       const resp = await fetch(`${BASE}/health`);
       if (!resp.ok) return;
       const data = await resp.json();
       const badge = el('modeBadge');
-      if (data.ai_gate === 'live') {
-        badge.textContent = 'LIVE';
-        badge.className = 'mode-badge mode-live';
-      } else {
-        badge.textContent = 'DRY RUN';
-        badge.className = 'mode-badge mode-dry-run';
-      }
-    } catch (e) {
-      console.error('Health fetch error:', e);
-    }
+      if (data.ai_gate === 'live') { badge.textContent = 'LIVE'; badge.className = 'mode-badge mode-live'; }
+      else { badge.textContent = 'DRY RUN'; badge.className = 'mode-badge mode-dry-run'; }
+    } catch (e) {}
   }
 
   // ── Fetch stats ──
@@ -653,27 +402,39 @@
       const resp = await fetch(`${BASE}/webhook/ai/stats`);
       if (!resp.ok) return;
       const data = await resp.json();
-
       const agree = data.AGREE?.count || 0;
       const disagree = data.DISAGREE?.count || 0;
-      const timeout = (data.TIMEOUT?.count || 0) + (data.ERROR?.count || 0);
       const total = data.total || 0;
 
       el('statTotal').textContent = total;
       el('statAgree').textContent = agree;
       el('statDisagree').textContent = disagree;
-      el('statTimeout').textContent = timeout;
+      el('statAgreeRate').textContent = total > 0 ? ((agree / total) * 100).toFixed(1) + '% of total' : '';
 
       const avgLat = data.AGREE?.avg_latency_ms || data.DISAGREE?.avg_latency_ms || 0;
       el('statLatency').textContent = Math.round(avgLat);
+    } catch (e) {}
+  }
 
-      const rate = total > 0 ? ((agree / total) * 100).toFixed(1) + '%' : '—';
-      el('statRate').textContent = rate;
-      el('statAgreeRate').textContent = total > 0 ? ((agree / total) * 100).toFixed(1) + '% of total' : '';
-      el('statDisagreeRate').textContent = total > 0 ? ((disagree / total) * 100).toFixed(1) + '% of total' : '';
-    } catch (e) {
-      console.error('Stats fetch error:', e);
-    }
+  // ── Fetch trade stats ──
+  async function fetchTradeStats() {
+    try {
+      const resp = await fetch(`${BASE}/webhook/ai/trades/stats`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      const pnl = data.total_pnl || 0;
+      const pnlEl = el('statPnl');
+      pnlEl.textContent = '$' + pnl.toFixed(2);
+      pnlEl.className = 'stat-value ' + (pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : 'neutral');
+      el('statPnlSub').textContent = (data.total || 0) + ' trades';
+
+      const wr = data.win_rate || 0;
+      const wrEl = el('statWinRate');
+      wrEl.textContent = wr.toFixed(1) + '%';
+      wrEl.className = 'stat-value ' + (wr >= 50 ? 'agree' : wr > 0 ? 'disagree' : 'neutral');
+      el('statWinRateSub').textContent = (data.wins || 0) + 'W / ' + (data.losses || 0) + 'L';
+    } catch (e) {}
   }
 
   // ── Fetch logs ──
@@ -683,19 +444,19 @@
       const resp = await fetch(`${BASE}/webhook/ai/logs?limit=${limit}`);
       if (!resp.ok) return;
       const logs = await resp.json();
-
       const filterVal = el('filterDecision').value;
       const filtered = filterVal ? logs.filter(l => l.ai_decision === filterVal) : logs;
 
       if (filtered.length === 0) {
-        el('logBody').innerHTML = '<tr><td colspan="10" class="empty-state"><div class="icon">⏳</div>No signals yet — waiting for first alert</td></tr>';
+        el('logBody').innerHTML = '<tr><td colspan="11" class="empty-state"><div class="icon">&#x23F3;</div>No signals yet</td></tr>';
         return;
       }
 
       el('logBody').innerHTML = filtered.map(log => {
         const ts = formatTime(log.timestamp);
+        const alertType = log.alert_type || 'entry';
         const signal = log.signal?.toUpperCase() || '?';
-        const signalClass = signal === 'LONG' ? 'badge-long' : signal === 'SHORT' ? 'badge-short' : '';
+        const signalClass = signal === 'LONG' ? 'badge-long' : signal === 'SHORT' ? 'badge-short' : signal === 'EXIT' ? 'badge-exit' : signal === 'HOLD' ? 'badge-hold' : '';
         const decisionClass = `badge-${log.ai_decision?.toLowerCase() || 'error'}`;
         const relayClass = `badge-${log.relay_result?.toLowerCase() || ''}`;
         const score = log.confluence_score ?? 0;
@@ -705,40 +466,72 @@
 
         return `<tr>
           <td class="time-cell">${ts}</td>
-          <td class="mono">${log.strategy || '—'}</td>
-          <td class="mono">${log.instrument || '—'}</td>
+          <td><span class="mono" style="color:var(--text-dim)">${alertType}</span></td>
+          <td class="mono">${log.strategy || '-'}</td>
+          <td class="mono">${log.instrument || '-'}</td>
           <td><span class="badge ${signalClass}">${signal}</span></td>
           <td>${renderScore(score)}</td>
           <td><span class="badge ${decisionClass}">${log.ai_decision || '?'}</span></td>
-          <td><span class="mono ${relayClass}">${log.relay_result || '—'}</span></td>
-          <td>
-            <div class="latency-bar">
-              <div class="latency-fill ${latencyClass}" style="width:${latencyWidth}px"></div>
-              <span class="latency-text">${latency}ms</span>
-            </div>
-          </td>
-          <td class="reason-cell">${log.ai_reason || '—'}</td>
-          <td><button class="refresh-btn" onclick='showPayload(${JSON.stringify(JSON.stringify(log))})'>⋯</button></td>
+          <td><span class="mono ${relayClass}">${log.relay_result || '-'}</span></td>
+          <td><div class="latency-bar"><div class="latency-fill ${latencyClass}" style="width:${latencyWidth}px"></div><span class="latency-text">${latency}ms</span></div></td>
+          <td class="reason-cell">${log.ai_reason || '-'}</td>
+          <td><button class="refresh-btn" onclick='showPayload(${JSON.stringify(JSON.stringify(log))})'>&#x22EF;</button></td>
         </tr>`;
       }).join('');
+    } catch (e) {}
+  }
 
-    } catch (e) {
-      console.error('Logs fetch error:', e);
-    }
+  // ── Fetch trades ──
+  async function fetchTrades() {
+    try {
+      const limit = el('logLimit').value || 50;
+      const resp = await fetch(`${BASE}/webhook/ai/trades?limit=${limit}`);
+      if (!resp.ok) return;
+      const trades = await resp.json();
+
+      if (trades.length === 0) {
+        el('tradesBody').innerHTML = '<tr><td colspan="12" class="empty-state"><div class="icon">&#x23F3;</div>No trades yet</td></tr>';
+        return;
+      }
+
+      el('tradesBody').innerHTML = trades.map(t => {
+        const dir = t.direction?.toUpperCase() || '?';
+        const dirClass = dir === 'LONG' ? 'badge-long' : 'badge-short';
+        const statusClass = t.status === 'open' ? 'badge-open' : 'badge-closed';
+        const ticks = t.ticks_pnl ?? 0;
+        const pnl = t.dollar_pnl ?? 0;
+        const pnlClass = t.status === 'open' ? 'pnl-zero' : pnl > 0 ? 'pnl-positive' : pnl < 0 ? 'pnl-negative' : 'pnl-zero';
+        const ticksClass = t.status === 'open' ? 'pnl-zero' : ticks > 0 ? 'pnl-positive' : ticks < 0 ? 'pnl-negative' : 'pnl-zero';
+
+        return `<tr>
+          <td class="time-cell">${formatTime(t.opened_at)}</td>
+          <td class="time-cell">${t.closed_at ? formatTime(t.closed_at) : '-'}</td>
+          <td class="mono">${t.strategy || '-'}</td>
+          <td class="mono">${t.instrument || '-'}</td>
+          <td><span class="badge ${dirClass}">${dir}</span></td>
+          <td class="mono">${t.entry_price ? t.entry_price.toFixed(2) : '-'}</td>
+          <td class="mono">${t.exit_price ? t.exit_price.toFixed(2) : '-'}</td>
+          <td class="mono ${ticksClass}">${t.status === 'open' ? '-' : (ticks > 0 ? '+' : '') + ticks.toFixed(1)}</td>
+          <td class="mono ${pnlClass}">${t.status === 'open' ? '-' : '$' + (pnl > 0 ? '+' : '') + pnl.toFixed(2)}</td>
+          <td class="mono">${t.bars_held ?? '-'}</td>
+          <td><span class="badge ${statusClass}">${t.status}</span></td>
+          <td class="reason-cell">${t.exit_reason || '-'}</td>
+        </tr>`;
+      }).join('');
+    } catch (e) {}
   }
 
   function renderScore(score) {
     let dots = '';
-    for (let i = 0; i < 4; i++) {
-      dots += `<div class="score-dot ${i < score ? 'active' : 'inactive'}"></div>`;
-    }
+    for (let i = 0; i < 4; i++) dots += `<div class="score-dot ${i < score ? 'active' : 'inactive'}"></div>`;
     return `<div class="score-dots" title="${score}/4">${dots}</div>`;
   }
 
   function formatTime(ts) {
-    if (!ts) return '—';
+    if (!ts) return '-';
     try {
-      const d = new Date(ts + (ts.endsWith('Z') ? '' : 'Z'));
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
       const now = new Date();
       const diffMs = now - d;
       const diffMin = Math.floor(diffMs / 60000);
@@ -758,47 +551,26 @@
     try {
       const log = JSON.parse(logJsonStr);
       let content = '';
-
-      content += '═══ AI DECISION ═══\n';
-      content += `Decision: ${log.ai_decision}\n`;
-      content += `Reason:   ${log.ai_reason}\n`;
-      content += `Latency:  ${log.ai_latency_ms}ms\n\n`;
-
-      content += '═══ RELAY RESULT ═══\n';
-      content += `Result:   ${log.relay_result}\n`;
-      content += `Details:  ${log.relay_details}\n\n`;
-
+      content += '=== AI DECISION ===\n';
+      content += `Decision: ${log.ai_decision}\nReason:   ${log.ai_reason}\nLatency:  ${log.ai_latency_ms}ms\n\n`;
+      content += '=== RELAY RESULT ===\n';
+      content += `Result:   ${log.relay_result}\nDetails:  ${log.relay_details}\n\n`;
       if (log.payload_json) {
-        content += '═══ INDICATOR PAYLOAD ═══\n';
-        try {
-          content += JSON.stringify(JSON.parse(log.payload_json), null, 2);
-        } catch {
-          content += log.payload_json;
-        }
+        content += '=== INDICATOR PAYLOAD ===\n';
+        try { content += JSON.stringify(JSON.parse(log.payload_json), null, 2); }
+        catch { content += log.payload_json; }
       }
-
-      if (log.ai_raw_response) {
-        content += '\n\n═══ RAW AI RESPONSE ═══\n';
-        content += log.ai_raw_response;
-      }
-
-      el('modalTitle').textContent = `${log.signal} ${log.instrument} — ${log.strategy || 'Signal'} @ ${log.timestamp || ''}`;
+      if (log.ai_raw_response) { content += '\n\n=== RAW AI RESPONSE ===\n' + log.ai_raw_response; }
+      el('modalTitle').textContent = `${log.signal} ${log.instrument} - ${log.strategy || 'Signal'} @ ${log.timestamp || ''}`;
       el('modalContent').textContent = content;
       el('modalOverlay').classList.add('active');
-    } catch (e) {
-      console.error('Modal error:', e);
-    }
+    } catch (e) {}
   }
 
-  function closeModal(e) {
-    if (e.target === el('modalOverlay')) {
-      el('modalOverlay').classList.remove('active');
-    }
-  }
+  function closeModal(e) { if (e.target === el('modalOverlay')) el('modalOverlay').classList.remove('active'); }
 
-  // ── Polling ──
   async function fetchAll() {
-    await Promise.all([fetchHealth(), fetchStats(), fetchLogs()]);
+    await Promise.all([fetchHealth(), fetchStats(), fetchTradeStats(), fetchLogs()]);
   }
 
   function startPolling() {
@@ -810,9 +582,8 @@
 
   el('pollInterval').addEventListener('change', startPolling);
   el('filterDecision').addEventListener('change', fetchLogs);
-  el('logLimit').addEventListener('change', fetchLogs);
+  el('logLimit').addEventListener('change', () => { fetchLogs(); fetchTrades(); });
 
-  // ── Init ──
   fetchAll();
   startPolling();
 </script>

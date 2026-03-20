@@ -651,6 +651,27 @@ def ai_gate_init_db():
             UNIQUE(relay_user, account, instrument)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_trades (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            relay_user      TEXT NOT NULL,
+            relay_id        TEXT NOT NULL,
+            account         TEXT NOT NULL,
+            instrument      TEXT NOT NULL,
+            strategy        TEXT,
+            direction       TEXT NOT NULL,
+            entry_price     REAL,
+            exit_price      REAL,
+            tick_value      REAL,
+            ticks_pnl       REAL,
+            dollar_pnl      REAL,
+            bars_held       INTEGER,
+            exit_reason     TEXT,
+            opened_at       TEXT,
+            closed_at       TEXT,
+            status          TEXT DEFAULT 'open'
+        )
+    """)
     # Migrate: add alert_type if missing
     cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_gate_logs)").fetchall()]
     if "alert_type" not in cols:
@@ -760,6 +781,113 @@ def ai_list_positions(relay_user: str = None) -> list[dict]:
         rows = conn.execute("SELECT * FROM ai_positions").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# --- AI Trade Tracking ---
+
+def ai_open_trade(relay_user: str, relay_id: str, account: str,
+                  instrument: str, strategy: str, direction: str,
+                  entry_price: float, tick_value: float) -> int:
+    """Record a new trade when AI agrees to enter. Returns trade id."""
+    ai_gate_init_db()
+    conn = db.get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute("""
+        INSERT INTO ai_trades
+            (relay_user, relay_id, account, instrument, strategy,
+             direction, entry_price, tick_value, opened_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+    """, (relay_user, relay_id, account, instrument, strategy,
+          direction, entry_price, tick_value, now))
+    trade_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return trade_id
+
+
+def ai_close_trade(relay_user: str, account: str, instrument: str,
+                   exit_price: float, exit_reason: str, bars_held: int = 0,
+                   ticks_pnl: float = None):
+    """Close the most recent open trade for this position."""
+    ai_gate_init_db()
+    conn = db.get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Find the open trade
+    row = conn.execute("""
+        SELECT id, direction, entry_price, tick_value FROM ai_trades
+        WHERE relay_user = ? AND account = ? AND instrument = ? AND status = 'open'
+        ORDER BY id DESC LIMIT 1
+    """, (relay_user, account, instrument)).fetchone()
+
+    if row:
+        trade = dict(row)
+        tick_value = trade["tick_value"] or 10.0
+
+        # Use provided ticks_pnl if available, otherwise estimate
+        if ticks_pnl is None:
+            entry_price = trade["entry_price"] or 0
+            direction = trade["direction"]
+            if direction == "long":
+                ticks_pnl = exit_price - entry_price
+            else:
+                ticks_pnl = entry_price - exit_price
+
+        dollar_pnl = ticks_pnl * tick_value
+
+        conn.execute("""
+            UPDATE ai_trades SET
+                exit_price = ?, ticks_pnl = ?, dollar_pnl = ?,
+                bars_held = ?, exit_reason = ?, closed_at = ?, status = 'closed'
+            WHERE id = ?
+        """, (exit_price, round(ticks_pnl, 2), round(dollar_pnl, 2),
+              bars_held, exit_reason, now, trade["id"]))
+
+    conn.commit()
+    conn.close()
+
+
+def ai_get_trades(relay_user: str = None, limit: int = 50) -> list[dict]:
+    ai_gate_init_db()
+    conn = db.get_connection()
+    if relay_user:
+        rows = conn.execute(
+            "SELECT * FROM ai_trades WHERE relay_user = ? ORDER BY id DESC LIMIT ?",
+            (relay_user, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM ai_trades ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def ai_get_trade_stats(relay_user: str = None) -> dict:
+    ai_gate_init_db()
+    conn = db.get_connection()
+    where = "WHERE relay_user = ? AND status = 'closed'" if relay_user else "WHERE status = 'closed'"
+    params = (relay_user,) if relay_user else ()
+
+    row = conn.execute(f"""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN dollar_pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN dollar_pnl <= 0 THEN 1 ELSE 0 END) as losses,
+            SUM(dollar_pnl) as total_pnl,
+            AVG(dollar_pnl) as avg_pnl,
+            MAX(dollar_pnl) as best_trade,
+            MIN(dollar_pnl) as worst_trade,
+            AVG(bars_held) as avg_bars
+        FROM ai_trades {where}
+    """, params).fetchone()
+
+    conn.close()
+    if row:
+        d = dict(row)
+        d["win_rate"] = round(d["wins"] / d["total"] * 100, 1) if d["total"] > 0 else 0
+        return d
+    return {"total": 0, "wins": 0, "losses": 0, "total_pnl": 0}
 
 
 def ai_get_logs(relay_user: str = None, limit: int = 50) -> list[dict]:
@@ -1068,6 +1196,11 @@ async def _handle_entry(payload: dict, body_text: str):
             relay_user, relay_id, account, instrument,
             signal.lower(), entry_price, tick_value, strategy
         )
+        # Record trade for P&L tracking
+        ai_open_trade(
+            relay_user, relay_id, account, instrument, strategy,
+            signal.lower(), entry_price, tick_value
+        )
 
         if AI_DRY_RUN:
             relay_result = "dry_run"
@@ -1243,6 +1376,7 @@ async def _handle_manage(payload: dict, body_text: str):
         else:
             relay_result = "safety_exit_dry_run"
 
+        ai_close_trade(relay_user, account, instrument, current_price, safety_reason, bars_in_trade, ticks_pnl=unrealized_ticks)
         ai_clear_position(relay_user, account, instrument)
 
         ai_log_decision(
@@ -1306,6 +1440,7 @@ async def _handle_manage(payload: dict, body_text: str):
                 relay_result = "exit_error"
                 relay_details = f"Unknown user: {relay_user}"
 
+        ai_close_trade(relay_user, account, instrument, current_price, f"AI EXIT: {ai_reason}", bars_in_trade, ticks_pnl=unrealized_ticks)
         ai_clear_position(relay_user, account, instrument)
         logger.info(f"[{relay_user}/{relay_id}] AI EXIT → position cleared")
 
@@ -1408,6 +1543,18 @@ async def ai_positions_clear(request: Request):
     return {"status": "ok", "details": "AI position cleared"}
 
 
+@app.get("/webhook/ai/trades")
+async def ai_trades_endpoint(relay_user: str = None, limit: int = 50):
+    """View AI trade history."""
+    return ai_get_trades(relay_user, limit)
+
+
+@app.get("/webhook/ai/trades/stats")
+async def ai_trade_stats_endpoint(relay_user: str = None):
+    """Trade performance stats."""
+    return ai_get_trade_stats(relay_user)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1415,8 +1562,7 @@ async def ai_positions_clear(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     """AI Gate live dashboard."""
-    dash_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
-    with open(dash_path, "r") as f:
+    with open(r"C:\traderelay\dashboard.html", "r", encoding="utf-8") as f:
         return f.read()
 
 
