@@ -28,6 +28,83 @@ ANTHROPIC_TIMEOUT = 15.0
 
 AI_DRY_RUN = os.environ.get("AI_DRY_RUN", "1").lower() not in ("0", "false", "no")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# INSTRUMENT SPECS — tick_size and point_value for P&L computation
+# tick_size  = minimum price increment
+# point_value = dollar value of 1.0 point move for 1 contract
+# dollar_per_tick = point_value * tick_size
+# ══════════════════════════════════════════════════════════════════════════════
+
+INSTRUMENTS = {
+    # E-mini / Micro Nasdaq
+    "NQ":   {"tick_size": 0.25, "point_value": 20.0},
+    "MNQ":  {"tick_size": 0.25, "point_value": 2.0},
+    # E-mini / Micro S&P 500
+    "ES":   {"tick_size": 0.25, "point_value": 50.0},
+    "MES":  {"tick_size": 0.25, "point_value": 5.0},
+    # E-mini / Micro Russell 2000
+    "RTY":  {"tick_size": 0.10, "point_value": 50.0},
+    "M2K":  {"tick_size": 0.10, "point_value": 5.0},
+    # Gold
+    "GC":   {"tick_size": 0.10, "point_value": 100.0},
+    "MGC":  {"tick_size": 0.10, "point_value": 10.0},
+    # Silver
+    "SI":   {"tick_size": 0.005, "point_value": 5000.0},
+    "SIL":  {"tick_size": 0.005, "point_value": 1000.0},
+    # Crude Oil
+    "CL":   {"tick_size": 0.01, "point_value": 1000.0},
+    "MCL":  {"tick_size": 0.01, "point_value": 100.0},
+    # E-mini / Micro Dow
+    "YM":   {"tick_size": 1.0,  "point_value": 5.0},
+    "MYM":  {"tick_size": 1.0,  "point_value": 0.5},
+}
+
+
+def get_instrument_spec(instrument: str) -> dict:
+    """Look up tick_size and point_value from instrument string.
+    Handles TradingView formats like 'MNQ1!', 'NQ1!', 'MNQM2026', etc.
+    """
+    # Extract root symbol: strip trailing digits, '!', month codes
+    root = ""
+    for ch in instrument.upper():
+        if ch.isalpha():
+            root += ch
+        else:
+            break
+
+    # Try exact match first, then common aliases
+    if root in INSTRUMENTS:
+        return INSTRUMENTS[root]
+
+    # Micro aliases (M2K -> M2K, already in table)
+    # Try without leading 'M' for micro variants not in table
+    if root.startswith("M") and root[1:] in INSTRUMENTS:
+        return INSTRUMENTS[root[1:]]
+
+    # Default: assume NQ-like specs and warn
+    logger.warning(f"Unknown instrument '{instrument}' (root: {root}) — using MNQ defaults")
+    return {"tick_size": 0.25, "point_value": 2.0}
+
+
+def compute_dollar_pnl(instrument: str, direction: str,
+                       entry_price: float, exit_price: float, qty: int = 1) -> tuple[float, float, float]:
+    """Compute P&L for a trade. Returns (points_pnl, dollar_pnl, ticks_pnl).
+
+    points_pnl = raw price difference
+    ticks_pnl  = points / tick_size (actual tick count)
+    dollar_pnl = points * point_value * qty
+    """
+    spec = get_instrument_spec(instrument)
+    if direction == "long":
+        points = exit_price - entry_price
+    else:
+        points = entry_price - exit_price
+
+    ticks = points / spec["tick_size"]
+    dollars = points * spec["point_value"] * qty
+    return round(points, 4), round(dollars, 2), round(ticks, 1)
+
+
 # Position management
 HARD_STOP_TICKS = 25
 MAX_BARS_HOLD = 60
@@ -240,8 +317,9 @@ def list_positions(relay_user: str = None) -> list[dict]:
 
 def _open_trade(relay_user: str, relay_id: str, account: str,
                 instrument: str, strategy: str, direction: str,
-                entry_price: float, tick_value: float) -> int:
+                entry_price: float) -> int:
     init_db()
+    spec = get_instrument_spec(instrument)
     conn = db.get_connection()
     now = datetime.now(timezone.utc).isoformat()
     cursor = conn.execute("""
@@ -250,7 +328,7 @@ def _open_trade(relay_user: str, relay_id: str, account: str,
              direction, entry_price, tick_value, opened_at, status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
     """, (relay_user, relay_id, account, instrument, strategy,
-          direction, entry_price, tick_value, now))
+          direction, entry_price, spec["point_value"], now))
     trade_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -259,29 +337,30 @@ def _open_trade(relay_user: str, relay_id: str, account: str,
 
 def _close_trade(relay_user: str, account: str, instrument: str,
                  exit_price: float, exit_reason: str, bars_held: int = 0,
-                 ticks_pnl: float = None):
+                 ticks_pnl: float = None, dollar_pnl: float = None):
     init_db()
     conn = db.get_connection()
     now = datetime.now(timezone.utc).isoformat()
 
     row = conn.execute("""
-        SELECT id, direction, entry_price, tick_value FROM ai_trades
+        SELECT id, direction, entry_price FROM ai_trades
         WHERE relay_user = ? AND account = ? AND instrument = ? AND status = 'open'
         ORDER BY id DESC LIMIT 1
     """, (relay_user, account, instrument)).fetchone()
 
     if row:
         trade = dict(row)
-        tick_value = trade["tick_value"] or 10.0
 
-        if ticks_pnl is None:
+        # Compute P&L from instrument specs if not provided
+        if ticks_pnl is None or dollar_pnl is None:
             ep = trade["entry_price"] or 0
-            if trade["direction"] == "long":
-                ticks_pnl = exit_price - ep
-            else:
-                ticks_pnl = ep - exit_price
-
-        dollar_pnl = ticks_pnl * tick_value
+            _, d_pnl, t_pnl = compute_dollar_pnl(
+                instrument, trade["direction"], ep, exit_price
+            )
+            if ticks_pnl is None:
+                ticks_pnl = t_pnl
+            if dollar_pnl is None:
+                dollar_pnl = d_pnl
 
         conn.execute("""
             UPDATE ai_trades SET
@@ -408,14 +487,10 @@ def get_stats(relay_user: str = None) -> dict:
 # P&L + EXIT SCORE COMPUTATION (server-side)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _compute_pnl(direction: str, entry_price: float, current_close: float,
-                 tick_value: float) -> tuple[float, float]:
-    """Returns (ticks_pnl, dollar_pnl) for 1 contract."""
-    if direction == "long":
-        ticks = current_close - entry_price
-    else:
-        ticks = entry_price - current_close
-    return round(ticks, 2), round(ticks * tick_value, 2)
+def _compute_pnl(instrument: str, direction: str, entry_price: float,
+                 current_close: float, qty: int = 1) -> tuple[float, float, float]:
+    """Returns (points_pnl, dollar_pnl, ticks_pnl) for a position."""
+    return compute_dollar_pnl(instrument, direction, entry_price, current_close, qty)
 
 
 def _pnl_tier(ticks: float) -> str:
@@ -537,6 +612,143 @@ def _build_manage_message(payload: dict, position: dict,
     return f"Position management payload:\n{json.dumps(enriched, indent=2)}"
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CROSSTRADE POSITION SYNC
+# ══════════════════════════════════════════════════════════════════════════════
+
+CT_API_BASE = "https://app.crosstrade.io/v1/api"
+
+
+def _extract_root_symbol(instrument: str) -> str:
+    """Extract root symbol from any instrument format.
+    'MNQ1!' -> 'MNQ', 'MNQ JUN26' -> 'MNQ', 'MNQM2026' -> 'MNQ'
+    """
+    root = ""
+    for ch in instrument.upper():
+        if ch.isalpha():
+            root += ch
+        else:
+            break
+    return root
+
+
+async def _get_ct_position(relay_user: str, account: str, instrument: str) -> dict | None:
+    """Query CrossTrade API for current position on this instrument.
+    Returns position dict or None if flat/error.
+    Matches by root symbol since TV uses 'MNQ1!' but NT8 uses 'MNQ JUN26'.
+    """
+    user = db.get_user(relay_user)
+    if not user:
+        return None
+
+    ct_key = user["crosstrade_key"]
+    our_root = _extract_root_symbol(instrument)
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{CT_API_BASE}/accounts/{account}/positions",
+                headers={
+                    "Authorization": f"Bearer {ct_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+
+        if resp.status_code != 200:
+            logger.warning(f"CT API returned {resp.status_code}: {resp.text[:200]}")
+            return None
+
+        data = resp.json()
+        positions = data.get("positions", [])
+
+        for pos in positions:
+            ct_instrument = pos.get("instrument", "")
+            ct_root = _extract_root_symbol(ct_instrument)
+            if ct_root == our_root:
+                return pos
+
+        return None  # No matching position = flat
+
+    except Exception as e:
+        logger.warning(f"CT position check failed: {e}")
+        return None
+
+
+async def sync_after_entry(relay_user: str, account: str, instrument: str):
+    """After entering a trade, check CT for the real fill price and update our records."""
+    ct_pos = await _get_ct_position(relay_user, account, instrument)
+    if not ct_pos:
+        logger.warning(f"[{relay_user}] Sync: CT shows no position after entry — may not have filled")
+        return
+
+    real_fill = ct_pos.get("averagePrice", 0)
+    ct_direction = ct_pos.get("marketPosition", "").lower()
+    ct_qty = ct_pos.get("quantity", 0)
+
+    # Update our position with real fill price
+    our_pos = _get_position(relay_user, account, instrument)
+    if our_pos and real_fill and real_fill != our_pos["entry_price"]:
+        conn = db.get_connection()
+        conn.execute("""
+            UPDATE ai_positions SET entry_price = ?
+            WHERE relay_user = ? AND account = ? AND instrument = ?
+        """, (real_fill, relay_user, account, instrument))
+        # Also update the open trade record
+        conn.execute("""
+            UPDATE ai_trades SET entry_price = ?
+            WHERE relay_user = ? AND account = ? AND instrument = ?
+            AND status = 'open'
+        """, (real_fill, relay_user, account, instrument))
+        conn.commit()
+        conn.close()
+        logger.info(
+            f"[{relay_user}] Sync: updated entry price {our_pos['entry_price']} → {real_fill} "
+            f"(CT: {ct_direction} {ct_qty} @ {real_fill})"
+        )
+
+
+async def sync_position_check(relay_user: str, account: str, instrument: str,
+                               our_direction: str) -> str:
+    """Check if CT position matches our state. Returns 'synced', 'ct_flat', or 'mismatch'.
+    Called periodically during manage to detect drift.
+    """
+    ct_pos = await _get_ct_position(relay_user, account, instrument)
+
+    if ct_pos is None:
+        # CT shows flat but we think we're in a position
+        logger.warning(
+            f"[{relay_user}] Sync: CT is FLAT but we track {our_direction} — position closed externally"
+        )
+        return "ct_flat"
+
+    ct_direction = ct_pos.get("marketPosition", "").lower()
+    if ct_direction != our_direction:
+        logger.warning(
+            f"[{relay_user}] Sync: direction mismatch — we track {our_direction}, CT shows {ct_direction}"
+        )
+        return "mismatch"
+
+    return "synced"
+
+
+async def sync_after_exit(relay_user: str, account: str, instrument: str):
+    """After exiting, confirm CT is actually flat."""
+    ct_pos = await _get_ct_position(relay_user, account, instrument)
+    if ct_pos:
+        ct_direction = ct_pos.get("marketPosition", "").lower()
+        ct_qty = ct_pos.get("quantity", 0)
+        logger.error(
+            f"[{relay_user}] Sync: CT still shows {ct_direction} {ct_qty} after our exit! "
+            f"Position may not have closed in NT8."
+        )
+        return False
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ANTHROPIC API
+# ══════════════════════════════════════════════════════════════════════════════
+
 async def _call_anthropic(user_msg: str, system_prompt: str) -> tuple[str, str, int, str]:
     """Call Anthropic API. Returns: (decision, reason, latency_ms, raw_response)"""
     if not ANTHROPIC_API_KEY:
@@ -614,6 +826,9 @@ def _build_ct_payload(ct_key: str, account: str, instrument: str,
                       action: str, qty: int, market_position: str,
                       prev_market_position: str, strategy_tag: str) -> str:
     """Build semicolon-delimited CrossTrade payload."""
+    # CrossTrade requires a non-empty strategy_tag
+    if not strategy_tag:
+        strategy_tag = "AIGate"
     lines = [
         f"key={ct_key}",
         "command=PLACE",
@@ -677,9 +892,8 @@ async def _force_close(position: dict, exit_price: float, reason: str,
     direction = position["direction"]
     bar_count = position.get("bar_count", 0)
 
-    ticks_pnl, dollar_pnl = _compute_pnl(
-        direction, position["entry_price"], exit_price,
-        position.get("tick_value", 10.0)
+    points_pnl, dollar_pnl, ticks_pnl = _compute_pnl(
+        instrument, direction, position["entry_price"], exit_price
     )
 
     logger.info(
@@ -689,7 +903,7 @@ async def _force_close(position: dict, exit_price: float, reason: str,
 
     # Close trade record
     _close_trade(relay_user, account, instrument, exit_price, reason,
-                 bar_count, ticks_pnl=ticks_pnl)
+                 bar_count, ticks_pnl=ticks_pnl, dollar_pnl=dollar_pnl)
 
     # Clear position
     clear_position(relay_user, account, instrument)
@@ -708,6 +922,9 @@ async def _force_close(position: dict, exit_price: float, reason: str,
             prev_market_position=direction,
             strategy_tag=strategy_tag
         )
+        # Sync: confirm CT is actually flat after exit
+        await asyncio.sleep(2)
+        await sync_after_exit(relay_user, account, instrument)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -864,13 +1081,13 @@ async def _handle_entry(payload: dict, body_text: str, direction: str):
 
     if ai_decision == "AGREE":
         entry_price = payload.get("close", payload.get("price", 0))
-        tick_value = payload.get("tick_value", 10.0)
+        spec = get_instrument_spec(instrument)
 
         # Open position + trade record
         _set_position(relay_user, relay_id, account, instrument,
-                      direction, entry_price, tick_value, strategy)
+                      direction, entry_price, spec["point_value"], strategy)
         _open_trade(relay_user, relay_id, account, instrument, strategy,
-                    direction, entry_price, tick_value)
+                    direction, entry_price)
 
         if AI_DRY_RUN:
             relay_result = "dry_run"
@@ -887,6 +1104,9 @@ async def _handle_entry(payload: dict, body_text: str, direction: str):
             )
             relay_result = ct_response.get("result", "unknown")
             relay_details = f"CT {entry_action} {direction} → {ct_response}"
+            # Sync: get real fill price from CT after a short delay
+            await asyncio.sleep(2)
+            await sync_after_entry(relay_user, account, instrument)
 
         logger.info(f"[{relay_user}/{relay_id}] ENTERED {direction.upper()} @ {entry_price} ({relay_result})")
 
@@ -932,10 +1152,9 @@ async def _handle_manage(payload: dict, body_text: str, position: dict):
 
     current_price = payload.get("close", payload.get("price", 0))
     entry_price = position["entry_price"]
-    tick_value = position.get("tick_value", 10.0)
 
     # Server-side computations
-    ticks_pnl, dollar_pnl = _compute_pnl(direction, entry_price, current_price, tick_value)
+    points_pnl, dollar_pnl, ticks_pnl = _compute_pnl(instrument, direction, entry_price, current_price)
     exit_score = _compute_exit_score(payload, direction)
     current_tier = _pnl_tier(ticks_pnl)
 
@@ -946,6 +1165,26 @@ async def _handle_manage(payload: dict, body_text: str, position: dict):
         f"[{relay_user}/{relay_id}] BAR {bar_count}: {direction} {instrument} "
         f"P&L={ticks_pnl:.1f}t (${dollar_pnl:.2f}) exit_score={exit_score}"
     )
+
+    # --- CT position sync (every 5 bars in live mode) ---
+    if not AI_DRY_RUN and bar_count > 0 and bar_count % AI_MANAGE_INTERVAL == 0:
+        sync_status = await sync_position_check(relay_user, account, instrument, direction)
+        if sync_status == "ct_flat":
+            # CT closed the position externally — clean up our state
+            reason = "SYNC: CT position is flat — closed externally"
+            _close_trade(relay_user, account, instrument, current_price, reason, bar_count,
+                         ticks_pnl=ticks_pnl, dollar_pnl=dollar_pnl)
+            clear_position(relay_user, account, instrument)
+            _log_decision(
+                relay_user=relay_user, relay_id=relay_id,
+                account=account, instrument=instrument,
+                signal="EXIT", strategy=strategy, confluence_score=exit_score,
+                ai_decision="SYNC_EXIT", ai_reason=reason,
+                ai_latency_ms=0, relay_result="sync_exit",
+                relay_details=reason, payload_json=body_text,
+                alert_type="manage"
+            )
+            return
 
     # --- Safety nets (no AI call) ---
 
