@@ -2,11 +2,14 @@
 #
 # Connects to CT WebSocket, subscribes to instrument quotes,
 # tracks CVD by comparing last price to bid/ask each second.
+# Keeps rolling 5-minute history for trend/divergence metrics.
 
 import os
 import json
 import logging
 import asyncio
+import time
+from collections import deque
 from datetime import datetime, timezone
 
 logger = logging.getLogger("trade_relay")
@@ -17,20 +20,118 @@ logger = logging.getLogger("trade_relay")
 
 CT_WS_URL = "wss://app.crosstrade.io/ws/stream"
 CT_API_KEY = os.environ.get("CT_API_KEY", "")
+HISTORY_SECONDS = 300  # 5 minutes of snapshots
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STATE
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Per-instrument CVD state
 _cvd_state: dict[str, dict] = {}
+# Rolling history: deque of (timestamp, cvd_value, price) per instrument
+_cvd_history: dict[str, deque] = {}
 _subscribed_instruments: set[str] = set()
 _ws_task: asyncio.Task | None = None
 _ws_connected = False
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# METRICS (computed from rolling history)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_history(instrument: str) -> deque:
+    if instrument not in _cvd_history:
+        _cvd_history[instrument] = deque(maxlen=HISTORY_SECONDS)
+    return _cvd_history[instrument]
+
+
+def _cvd_at_seconds_ago(history: deque, seconds: int) -> int | None:
+    """Get CVD value from N seconds ago. Returns None if not enough data."""
+    if not history:
+        return None
+    now = time.time()
+    target = now - seconds
+    # Walk backwards to find closest snapshot
+    for ts, cvd_val, price in reversed(history):
+        if ts <= target:
+            return cvd_val
+    return None
+
+
+def _price_at_seconds_ago(history: deque, seconds: int) -> float | None:
+    """Get price from N seconds ago."""
+    if not history:
+        return None
+    now = time.time()
+    target = now - seconds
+    for ts, cvd_val, price in reversed(history):
+        if ts <= target:
+            return price
+    return None
+
+
+def compute_metrics(instrument: str) -> dict:
+    """Compute CVD trend metrics from rolling history."""
+    state = _cvd_state.get(instrument)
+    if not state:
+        return {
+            "cvd_1m_delta": 0,
+            "cvd_3m_delta": 0,
+            "cvd_5m_delta": 0,
+            "cvd_trend": "flat",
+            "cvd_divergence": "none"
+        }
+
+    history = _get_history(instrument)
+    current_cvd = state.get("cvd", 0)
+    current_price = state.get("last", 0)
+
+    # Deltas
+    cvd_1m_ago = _cvd_at_seconds_ago(history, 60)
+    cvd_3m_ago = _cvd_at_seconds_ago(history, 180)
+    cvd_5m_ago = _cvd_at_seconds_ago(history, 300)
+
+    cvd_1m_delta = (current_cvd - cvd_1m_ago) if cvd_1m_ago is not None else 0
+    cvd_3m_delta = (current_cvd - cvd_3m_ago) if cvd_3m_ago is not None else 0
+    cvd_5m_delta = (current_cvd - cvd_5m_ago) if cvd_5m_ago is not None else 0
+
+    # Trend (based on 5m delta, fall back to 3m, then 1m)
+    delta_for_trend = cvd_5m_delta or cvd_3m_delta or cvd_1m_delta
+    if delta_for_trend > 50:
+        cvd_trend = "rising"
+    elif delta_for_trend < -50:
+        cvd_trend = "falling"
+    else:
+        cvd_trend = "flat"
+
+    # Divergence: price vs CVD direction mismatch over 3 minutes
+    price_3m_ago = _price_at_seconds_ago(history, 180)
+    cvd_divergence = "none"
+    if price_3m_ago is not None and cvd_3m_ago is not None:
+        price_rising = current_price > price_3m_ago
+        price_falling = current_price < price_3m_ago
+        cvd_rising = cvd_3m_delta > 50
+        cvd_falling = cvd_3m_delta < -50
+
+        if price_rising and cvd_falling:
+            cvd_divergence = "bearish_div"  # price up but sellers dominant
+        elif price_falling and cvd_rising:
+            cvd_divergence = "bullish_div"  # price down but buyers dominant
+
+    return {
+        "cvd_1m_delta": cvd_1m_delta,
+        "cvd_3m_delta": cvd_3m_delta,
+        "cvd_5m_delta": cvd_5m_delta,
+        "cvd_trend": cvd_trend,
+        "cvd_divergence": cvd_divergence
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PUBLIC API
+# ══════════════════════════════════════════════════════════════════════════════
+
 def get_cvd(instrument: str) -> dict:
-    """Get current CVD state for an instrument."""
+    """Get current CVD state + metrics for an instrument."""
     state = _cvd_state.get(instrument)
     if not state:
         return {
@@ -42,16 +143,38 @@ def get_cvd(instrument: str) -> dict:
             "volume": 0,
             "direction": "neutral",
             "delta_1s": 0,
+            "cvd_1m_delta": 0,
+            "cvd_3m_delta": 0,
+            "cvd_5m_delta": 0,
+            "cvd_trend": "flat",
+            "cvd_divergence": "none",
             "connected": _ws_connected,
             "updated_at": None
         }
-    return {**state, "connected": _ws_connected}
+    metrics = compute_metrics(instrument)
+    return {
+        "instrument": state.get("instrument", instrument),
+        "cvd": state.get("cvd", 0),
+        "last": state.get("last", 0),
+        "bid": state.get("bid", 0),
+        "ask": state.get("ask", 0),
+        "volume": state.get("volume", 0),
+        "direction": state.get("direction", "neutral"),
+        "delta_1s": state.get("delta_1s", 0),
+        **metrics,
+        "connected": _ws_connected,
+        "updated_at": state.get("updated_at")
+    }
 
 
 def get_all_cvd() -> list[dict]:
-    """Get CVD state for all tracked instruments."""
+    """Get CVD state + metrics for all tracked instruments."""
     return [get_cvd(inst) for inst in _subscribed_instruments]
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QUOTE PROCESSING
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _process_quote(quote: dict):
     """Process a single quote update and update CVD."""
@@ -96,7 +219,6 @@ def _process_quote(quote: dict):
             direction = "sell"
             delta = -vol_delta
         else:
-            # Between bid and ask — split or neutral
             direction = "neutral"
             delta = 0
 
@@ -109,6 +231,10 @@ def _process_quote(quote: dict):
     state["direction"] = direction
     state["delta_1s"] = delta
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Append to rolling history
+    history = _get_history(instrument)
+    history.append((time.time(), state["cvd"], last))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -137,14 +263,12 @@ async def _ws_loop(api_key: str, instruments: list[str]):
                 _ws_connected = True
                 logger.info(f"CVD: connected. Subscribing to {instruments}")
 
-                # Subscribe
                 subscribe_msg = json.dumps({
                     "action": "subscribe",
                     "instruments": instruments
                 })
                 await ws.send(subscribe_msg)
 
-                # Process messages
                 async for msg in ws:
                     try:
                         data = json.loads(msg)
@@ -161,9 +285,7 @@ async def _ws_loop(api_key: str, instruments: list[str]):
 
 
 def start(api_key: str, instruments: list[str]):
-    """Start the CVD WebSocket client as a background task.
-    Call this from the relay lifespan.
-    """
+    """Start the CVD WebSocket client as a background task."""
     global _ws_task, _subscribed_instruments
 
     if not api_key:
@@ -194,7 +316,11 @@ def reset(instrument: str = None):
         if instrument in _cvd_state:
             _cvd_state[instrument]["cvd"] = 0
             _cvd_state[instrument]["delta_1s"] = 0
+        if instrument in _cvd_history:
+            _cvd_history[instrument].clear()
     else:
         for state in _cvd_state.values():
             state["cvd"] = 0
             state["delta_1s"] = 0
+        for hist in _cvd_history.values():
+            hist.clear()

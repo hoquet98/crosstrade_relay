@@ -586,8 +586,31 @@ def _should_call_ai_manage(exit_score: int, bar_count: int,
 # ANTHROPIC API
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _get_cvd_context(instrument: str) -> dict:
+    """Get CVD metrics to inject into AI payload."""
+    try:
+        import cvd
+        metrics = cvd.compute_metrics(instrument)
+        state = cvd.get_cvd(instrument)
+        return {
+            "cvd": state.get("cvd", 0),
+            "cvd_1m_delta": metrics.get("cvd_1m_delta", 0),
+            "cvd_3m_delta": metrics.get("cvd_3m_delta", 0),
+            "cvd_5m_delta": metrics.get("cvd_5m_delta", 0),
+            "cvd_trend": metrics.get("cvd_trend", "flat"),
+            "cvd_divergence": metrics.get("cvd_divergence", "none"),
+        }
+    except Exception:
+        return {}
+
+
 def _build_entry_message(payload: dict) -> str:
-    indicator_data = {k: v for k, v in payload.items() if k not in ROUTING_KEYS}
+    instrument = payload.get("instrument", "")
+    cvd_data = _get_cvd_context(instrument)
+    indicator_data = {**cvd_data}
+    for k, v in payload.items():
+        if k not in ROUTING_KEYS:
+            indicator_data[k] = v
     return f"Signal payload:\n{json.dumps(indicator_data, indent=2)}"
 
 
@@ -595,6 +618,8 @@ def _build_manage_message(payload: dict, position: dict,
                           exit_score: int, ticks_pnl: float,
                           dollar_pnl: float, bar_count: int) -> str:
     """Build enriched message with server-computed fields for manage decisions."""
+    instrument = position.get("instrument", payload.get("instrument", ""))
+    cvd_data = _get_cvd_context(instrument)
     enriched = {
         "position_direction": position["direction"],
         "entry_price": position["entry_price"],
@@ -605,6 +630,7 @@ def _build_manage_message(payload: dict, position: dict,
         "bars_in_trade": bar_count,
         "hard_stop_ticks": payload.get("hard_stop_ticks", DEFAULT_HARD_STOP_TICKS),
         "max_bars_hold": payload.get("max_bars_hold", DEFAULT_MAX_BARS_HOLD),
+        **cvd_data,
     }
     # Add all indicators from payload
     for k, v in payload.items():

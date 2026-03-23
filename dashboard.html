@@ -326,6 +326,27 @@
         <span style="color:var(--text-dim); font-size:10px;">DELTA</span><br>
         <span id="cvdDelta">0</span>
       </div>
+      <div style="width:1px; height:28px; background:var(--border); margin:0 4px;"></div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">1M</span><br>
+        <span id="cvd1m">0</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">3M</span><br>
+        <span id="cvd3m">0</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">5M</span><br>
+        <span id="cvd5m">0</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">TREND</span><br>
+        <span id="cvdTrend">--</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">DIV</span><br>
+        <span id="cvdDiv">--</span>
+      </div>
       <div id="cvdStatus" style="color:var(--text-dim); font-size:10px; margin-left:auto;">disconnected</div>
     </div>
   </div>
@@ -654,6 +675,26 @@
       const d = c.delta_1s || 0;
       deltaEl.textContent = (d > 0 ? '+' : '') + d.toLocaleString();
       deltaEl.style.color = d > 0 ? 'var(--profit)' : d < 0 ? 'var(--loss)' : 'var(--text-dim)';
+
+      // Metrics
+      function fmtDelta(el_id, val) {
+        const e = el(el_id);
+        e.textContent = (val > 0 ? '+' : '') + val.toLocaleString();
+        e.style.color = val > 50 ? 'var(--profit)' : val < -50 ? 'var(--loss)' : 'var(--text-secondary)';
+      }
+      fmtDelta('cvd1m', c.cvd_1m_delta || 0);
+      fmtDelta('cvd3m', c.cvd_3m_delta || 0);
+      fmtDelta('cvd5m', c.cvd_5m_delta || 0);
+
+      const trendEl = el('cvdTrend');
+      const trend = c.cvd_trend || 'flat';
+      trendEl.textContent = trend;
+      trendEl.style.color = trend === 'rising' ? 'var(--profit)' : trend === 'falling' ? 'var(--loss)' : 'var(--text-dim)';
+
+      const divEl = el('cvdDiv');
+      const div = c.cvd_divergence || 'none';
+      divEl.textContent = div === 'none' ? '--' : div.replace('_', ' ');
+      divEl.style.color = div === 'bullish_div' ? 'var(--profit)' : div === 'bearish_div' ? 'var(--loss)' : 'var(--text-dim)';
 
       const dot = el('cvdDot');
       if (c.direction === 'buy') {
