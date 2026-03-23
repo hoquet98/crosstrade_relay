@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 import database as db
 import ai_gate
+import cvd
 
 # Grace period (seconds) -- if a position was opened within this window,
 # skip the CT API check and trust local ownership (prevents race conditions
@@ -39,8 +40,15 @@ async def lifespan(app: FastAPI):
     ai_gate.init_db()
     ai_gate.startup_recovery()
     watchdog = asyncio.create_task(ai_gate.stale_position_watchdog())
+    # Start CVD WebSocket if API key is available
+    ct_key = os.environ.get("CT_API_KEY", "")
+    cvd_instruments = os.environ.get("CVD_INSTRUMENTS", "MNQ JUN26").split(",")
+    cvd_instruments = [i.strip() for i in cvd_instruments if i.strip()]
+    if ct_key:
+        cvd.start(ct_key, cvd_instruments)
     logger.info(f"Trade Relay started -- database initialized (AI Gate: {'DRY RUN' if ai_gate.AI_DRY_RUN else 'LIVE'})")
     yield
+    cvd.stop()
     watchdog.cancel()
     logger.info("Trade Relay shutting down")
 
@@ -672,6 +680,29 @@ async def dashboard():
     """AI Gate live dashboard."""
     with open(r"C:\traderelay\dashboard.html", "r", encoding="utf-8") as f:
         return f.read()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CVD ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/cvd")
+async def cvd_all():
+    """Get CVD state for all tracked instruments."""
+    return cvd.get_all_cvd()
+
+
+@app.get("/cvd/{instrument}")
+async def cvd_instrument(instrument: str):
+    """Get CVD state for a specific instrument."""
+    return cvd.get_cvd(instrument)
+
+
+@app.post("/cvd/reset")
+async def cvd_reset(instrument: str = None):
+    """Reset CVD to zero."""
+    cvd.reset(instrument)
+    return {"status": "ok"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

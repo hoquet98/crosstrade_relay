@@ -286,6 +286,50 @@
     </div>
   </div>
 
+  <!-- CVD Widget -->
+  <div id="cvdWidget" style="
+    display: flex; align-items: center; gap: 20px;
+    padding: 12px 20px; margin-bottom: 16px;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  ">
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div id="cvdDot" style="
+        width: 18px; height: 18px; border-radius: 50%;
+        background: var(--text-dim);
+        transition: background 0.3s, box-shadow 0.3s;
+      "></div>
+      <span style="color:var(--text-secondary); font-size:11px; text-transform:uppercase; letter-spacing:1px;">CVD</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:16px;">
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">INSTRUMENT</span><br>
+        <span id="cvdInstrument" style="font-weight:600;">--</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">LAST</span><br>
+        <span id="cvdLast" style="font-weight:600;">--</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">BID</span><br>
+        <span id="cvdBid">--</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">ASK</span><br>
+        <span id="cvdAsk">--</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">CVD</span><br>
+        <span id="cvdValue" style="font-weight:700; font-size:16px;">0</span>
+      </div>
+      <div>
+        <span style="color:var(--text-dim); font-size:10px;">DELTA</span><br>
+        <span id="cvdDelta">0</span>
+      </div>
+      <div id="cvdStatus" style="color:var(--text-dim); font-size:10px; margin-left:auto;">disconnected</div>
+    </div>
+  </div>
+
   <div class="config-bar">
     <label>Refresh</label>
     <input type="number" id="pollInterval" value="5" min="2" max="60" style="width:50px"> <span style="color:var(--text-dim);font-size:11px">sec</span>
@@ -586,6 +630,52 @@
 
   fetchAll();
   startPolling();
+
+  // --- CVD Widget ---
+  async function fetchCVD() {
+    try {
+      const resp = await fetch(`${BASE}/cvd`);
+      const data = await resp.json();
+      if (!data || data.length === 0) {
+        el('cvdStatus').textContent = 'no data';
+        return;
+      }
+      const c = data[0];
+      el('cvdInstrument').textContent = c.instrument || '--';
+      el('cvdLast').textContent = c.last ? c.last.toFixed(2) : '--';
+      el('cvdBid').textContent = c.bid ? c.bid.toFixed(2) : '--';
+      el('cvdAsk').textContent = c.ask ? c.ask.toFixed(2) : '--';
+
+      const cvdEl = el('cvdValue');
+      cvdEl.textContent = c.cvd.toLocaleString();
+      cvdEl.style.color = c.cvd > 0 ? 'var(--profit)' : c.cvd < 0 ? 'var(--loss)' : 'var(--text-primary)';
+
+      const deltaEl = el('cvdDelta');
+      const d = c.delta_1s || 0;
+      deltaEl.textContent = (d > 0 ? '+' : '') + d.toLocaleString();
+      deltaEl.style.color = d > 0 ? 'var(--profit)' : d < 0 ? 'var(--loss)' : 'var(--text-dim)';
+
+      const dot = el('cvdDot');
+      if (c.direction === 'buy') {
+        dot.style.background = 'var(--agree)';
+        dot.style.boxShadow = '0 0 12px var(--agree)';
+      } else if (c.direction === 'sell') {
+        dot.style.background = 'var(--disagree)';
+        dot.style.boxShadow = '0 0 12px var(--disagree)';
+      } else {
+        dot.style.background = 'var(--text-dim)';
+        dot.style.boxShadow = 'none';
+      }
+
+      el('cvdStatus').textContent = c.connected ? 'live' : 'disconnected';
+      el('cvdStatus').style.color = c.connected ? 'var(--agree)' : 'var(--text-dim)';
+    } catch (e) {
+      el('cvdStatus').textContent = 'error';
+    }
+  }
+
+  fetchCVD();
+  setInterval(fetchCVD, 500);
 </script>
 </body>
 </html>
