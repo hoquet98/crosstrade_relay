@@ -1,11 +1,12 @@
 // ══════════════════════════════════════════════════════════════════════════════
-// QTP - Precision Scalp AI v1.2.2
+// QTP - Precision Scalp AI v2.0.0
 // © QuantTradingPro
 // ══════════════════════════════════════════════════════════════════════════════
-// AI Gate Edition — entry signals + per-bar manage alerts for AI trade management
+// Data Streamer — sends full indicator payload every bar.
+// Server (AI Gate) makes all trade decisions: entries, exits, position mgmt.
 // ══════════════════════════════════════════════════════════════════════════════
 //@version=6
-indicator("QTP - Precision Scalp AI v1.2.2", overlay=true, max_labels_count=500, max_lines_count=500)
+indicator("QTP - Precision Scalp AI v2.0.0", overlay=true, max_labels_count=500, max_lines_count=500)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // INPUTS
@@ -59,10 +60,9 @@ aiAccount      = input.string("",                "Account Name",          group=
 aiQty          = input.int(1,                    "Quantity",   minval=1,  group="AI Gate Routing")
 aiStrategyTag  = input.string("",                "Strategy Tag (CT Lock)", group="AI Gate Routing")
 
-// ── AI Trade Management ─────────────────────────────────────────────────────
-aiTickValue     = input.float(10.0,  "Tick Value ($)",                      group="AI Trade Mgmt")
-aiMaxBarsHold   = input.int(60,      "Max Bars in Trade",    minval=5,     group="AI Trade Mgmt")
-aiHardStopTicks = input.int(25,      "Hard Stop (ticks)",    minval=1,     group="AI Trade Mgmt")
+// ── AI Trade Parameters (sent to server for reference) ──────────────────────
+aiTickValue     = input.float(10.0,  "Tick Value ($)",                      group="AI Trade Params")
+aiHardStopTicks = input.int(25,      "Hard Stop (ticks)",    minval=1,     group="AI Trade Params")
 
 // ── Stoch RSI (for exit scoring) ────────────────────────────────────────────
 stochLen   = input.int(14,  "Stoch RSI Length",   minval=1, group="Exit: Stoch RSI")
@@ -311,197 +311,120 @@ maintStartMins  = 17 * 60
 minsToMaint     = maintStartMins > minsInDay ? maintStartMins - minsInDay : 0
 
 // ══════════════════════════════════════════════════════════════════════════════
-// POSITION TRACKING (local — relay ignores if no AI position exists)
+// SIGNAL FLAGS (computed locally, sent to server — server decides everything)
 // ══════════════════════════════════════════════════════════════════════════════
 
-var bool   inPosition   = false
-var string posDirection  = ""
-var float  entryPrice    = na
-var int    entryBarIdx   = 0
-
-if longSignal and not inPosition
-    inPosition   := true
-    posDirection := "LONG"
-    entryPrice   := close
-    entryBarIdx  := bar_index
-
-if shortSignal and not inPosition
-    inPosition   := true
-    posDirection := "SHORT"
-    entryPrice   := close
-    entryBarIdx  := bar_index
-
-if longSignal and inPosition and posDirection == "SHORT"
-    posDirection := "LONG"
-    entryPrice   := close
-    entryBarIdx  := bar_index
-
-if shortSignal and inPosition and posDirection == "LONG"
-    posDirection := "SHORT"
-    entryPrice   := close
-    entryBarIdx  := bar_index
-
-barsInTrade = inPosition ? bar_index - entryBarIdx : 0
-
-longPL  = (close - entryPrice) / syminfo.mintick
-shortPL = (entryPrice - close) / syminfo.mintick
-unrealizedTicks = inPosition ? (posDirection == "LONG" ? longPL : shortPL) : 0.0
-unrealizedDollars = unrealizedTicks * aiTickValue
-
-var float maxFavorable = 0.0
-var float maxAdverse   = 0.0
-if inPosition
-    maxFavorable := math.max(maxFavorable, unrealizedTicks)
-    maxAdverse   := math.min(maxAdverse, unrealizedTicks)
-else
-    maxFavorable := 0.0
-    maxAdverse   := 0.0
-
-if inPosition and barsInTrade >= aiMaxBarsHold
-    inPosition := false
-
-// ══════════════════════════════════════════════════════════════════════════════
-// EXIT SCORING (computed on chart, sent to AI for reference)
-// ══════════════════════════════════════════════════════════════════════════════
-
-zlemaFlippedAgainst = (posDirection == "LONG" and trendDown and trendUp[1]) or (posDirection == "SHORT" and trendUp and trendDown[1])
-utBotFlippedAgainst = (posDirection == "LONG" and utFlippedBear) or (posDirection == "SHORT" and utFlippedBull)
+// Trend flips (direction-agnostic — server knows which side it's on)
+zlemaFlippedBull = trendUp and trendDown[1]
+zlemaFlippedBear = trendDown and trendUp[1]
 zlemaWentNeutral = not trendUp and not trendDown and (trendUp[1] or trendDown[1])
-stochCrossedAgainst = (posDirection == "LONG" and stochBearX) or (posDirection == "SHORT" and stochBullX)
-momFlippedAgainst = (posDirection == "LONG" and momFlippedBear) or (posDirection == "SHORT" and momFlippedBull)
-exitWarnFired = (posDirection == "LONG" and longExitWarn and not longExitWarn[1]) or (posDirection == "SHORT" and shortExitWarn and not shortExitWarn[1])
-stochAtExtreme = (posDirection == "LONG" and stochInOB) or (posDirection == "SHORT" and stochInOS)
-
-exitScore = (zlemaFlippedAgainst ? 3 : 0) + (utBotFlippedAgainst ? 3 : 0) + (zlemaWentNeutral ? 2 : 0) + (stochCrossedAgainst ? 2 : 0) + (momFlippedAgainst ? 2 : 0) + (exitWarnFired ? 2 : 0) + (stochAtExtreme ? 1 : 0)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// JSON BUILDERS
+// JSON BUILDER — single bar payload sent every bar
 // ══════════════════════════════════════════════════════════════════════════════
 
 f_quote(string val) =>
     '"' + val + '"'
 
-f_indicators() =>
-    string r = ',"f_zlema_trend_bull":' + (f1_bull ? "true" : "false")
-    r += ',"f_zlema_trend_bear":' + (f1_bear ? "true" : "false")
-    r += ',"f_wt_mom_bull":' + (f2_bull ? "true" : "false")
-    r += ',"f_wt_mom_bear":' + (f2_bear ? "true" : "false")
-    r += ',"f_squeeze_off":' + (sqOff ? "true" : "false")
-    r += ',"f_trending":' + (trending ? "true" : "false")
-    r += ',"zlema":' + str.tostring(math.round(zlemaVal, 2))
-    r += ',"zl_slope":' + str.tostring(math.round(zlSlope, 4))
-    r += ',"wt1":' + str.tostring(math.round(wt1, 2))
-    r += ',"wt2":' + str.tostring(math.round(wt2, 2))
-    r += ',"wt_bull_cross":' + (wtBullCross ? "true" : "false")
-    r += ',"wt_bear_cross":' + (wtBearCross ? "true" : "false")
-    r += ',"sq_mom":' + str.tostring(math.round(sqMom, 4))
-    r += ',"squeeze_on":' + (sqOn ? "true" : "false")
-    r += ',"er_val":' + str.tostring(math.round(erVal, 4))
-    r += ',"ut_trail":' + str.tostring(math.round(utTrailLine, 2))
-    r += ',"ema20":' + str.tostring(math.round(ema20, 2))
-    r += ',"ema50":' + str.tostring(math.round(ema50, 2))
-    r += ',"ema20_slope5":' + str.tostring(math.round(ema20Slope5, 4))
-    r += ',"price_above_ema20":' + (priceAboveEma20 ? "true" : "false")
-    r += ',"price_above_ema50":' + (priceAboveEma50 ? "true" : "false")
-    r += ',"htf_bias":' + f_quote(htfBias)
-    r += ',"rsi14":' + str.tostring(math.round(rsi14, 2))
-    r += ',"rsi_bull_div":' + (rsiBullDiv ? "true" : "false")
-    r += ',"rsi_bear_div":' + (rsiBearDiv ? "true" : "false")
-    r += ',"cci20":' + str.tostring(math.round(cci20, 2))
-    r += ',"stoch_rsi_k":' + str.tostring(math.round(stochRsiK, 2))
-    r += ',"stoch_rsi_d":' + str.tostring(math.round(stochRsiD, 2))
-    r += ',"stoch_in_ob":' + (stochInOB ? "true" : "false")
-    r += ',"stoch_in_os":' + (stochInOS ? "true" : "false")
-    r += ',"atr14":' + str.tostring(math.round(atr14, 4))
-    r += ',"atr_consumed_pct":' + str.tostring(math.round(atrConsumedPct, 4))
-    r += ',"bb_pctb":' + str.tostring(math.round(bbPctB, 4))
-    r += ',"bar_range_vs_atr":' + str.tostring(math.round(barRangeVsATR, 4))
-    r += ',"vol_ratio":' + str.tostring(math.round(volRatio, 2))
-    r += ',"bar_body_pct":' + str.tostring(math.round(barBodyPct, 4))
-    r += ',"bar_upper_wick_pct":' + str.tostring(math.round(barUpperWickPct, 4))
-    r += ',"bar_lower_wick_pct":' + str.tostring(math.round(barLowerWickPct, 4))
-    r += ',"bar_is_bullish":' + (barIsBullish ? "true" : "false")
-    r += ',"prev_3_pattern":' + f_quote(prev3Pattern)
-    r += ',"vwap_dist_ticks":' + str.tostring(math.round(vwapDistTicks, 1))
-    r += ',"dist_sess_high_ticks":' + str.tostring(math.round(distSessHighTicks, 1))
-    r += ',"dist_sess_low_ticks":' + str.tostring(math.round(distSessLowTicks, 1))
-    r += ',"bars_since_swing_high":' + str.tostring(barsSinceSwingHigh)
-    r += ',"bars_since_swing_low":' + str.tostring(barsSinceSwingLow)
-    r += ',"cons_range_ticks":' + str.tostring(math.round(consRangeTicks, 1))
-    r += ',"cons_range_vs_atr":' + str.tostring(math.round(consRangeVsATR, 4))
-    r += ',"last_5_closes":[' + str.tostring(math.round(c1, 2)) + ',' + str.tostring(math.round(c2, 2)) + ',' + str.tostring(math.round(c3, 2)) + ',' + str.tostring(math.round(c4, 2)) + ',' + str.tostring(math.round(c5, 2)) + ']'
-    r += ',"session_bucket":' + f_quote(sessionBucket)
-    r += ',"day_of_week":' + f_quote(dowStr)
-    r += ',"mins_to_maintenance":' + str.tostring(minsToMaint)
-    r += ',"price":' + str.tostring(math.round(close, 2))
-    r
-
-// ── Entry payload ───────────────────────────────────────────────────────────
-f_entryPayload(string signalDir, int filterCount) =>
-    string e = '{"alert_type":"entry"'
-    e += ',"relay_user":' + f_quote(aiRelayUser)
-    e += ',"relay_id":' + f_quote(aiRelayId)
-    e += ',"account":' + f_quote(aiAccount)
-    e += ',"qty":' + str.tostring(aiQty)
-    e += ',"strategy_tag":' + f_quote(aiStrategyTag)
-    e += ',"signal":' + f_quote(signalDir)
-    e += ',"strategy":' + f_quote("PrecisionScalp")
-    e += ',"strategy_type":' + f_quote(aiStrategyType)
-    e += ',"instrument":' + f_quote(syminfo.ticker)
-    e += ',"timeframe":' + f_quote(timeframe.period)
-    e += ',"target_ticks":' + str.tostring(aiTargetTicks)
-    e += ',"stop_ticks":' + str.tostring(aiStopTicks)
-    e += ',"hard_stop_ticks":' + str.tostring(aiHardStopTicks)
-    e += ',"rr":' + str.tostring(math.round(aiTargetTicks / math.max(aiStopTicks, 1), 2))
-    e += ',"confluence_score":' + str.tostring(filterCount)
-    e += ',"tick_value":' + str.tostring(aiTickValue)
-    e += f_indicators()
-    e += '}'
-    e
-
-// ── Manage payload (every bar while in trade) ───────────────────────────────
-f_managePayload() =>
-    string m = '{"alert_type":"manage"'
-    m += ',"relay_user":' + f_quote(aiRelayUser)
-    m += ',"relay_id":' + f_quote(aiRelayId)
-    m += ',"account":' + f_quote(aiAccount)
-    m += ',"instrument":' + f_quote(syminfo.ticker)
-    m += ',"strategy":' + f_quote("PrecisionScalp")
-    m += ',"position_direction":' + f_quote(posDirection)
-    m += ',"entry_price":' + str.tostring(math.round(entryPrice, 2))
-    m += ',"bars_in_trade":' + str.tostring(barsInTrade)
-    m += ',"unrealized_ticks":' + str.tostring(math.round(unrealizedTicks, 1))
-    m += ',"unrealized_dollars":' + str.tostring(math.round(unrealizedDollars, 2))
-    m += ',"max_favorable_ticks":' + str.tostring(math.round(maxFavorable, 1))
-    m += ',"max_adverse_ticks":' + str.tostring(math.round(maxAdverse, 1))
-    m += ',"tick_value":' + str.tostring(aiTickValue)
-    m += ',"hard_stop_ticks":' + str.tostring(aiHardStopTicks)
-    m += ',"max_bars_hold":' + str.tostring(aiMaxBarsHold)
-    m += ',"exit_score":' + str.tostring(exitScore)
-    m += ',"exit_zlema_flipped":' + (zlemaFlippedAgainst ? "true" : "false")
-    m += ',"exit_utbot_flipped":' + (utBotFlippedAgainst ? "true" : "false")
-    m += ',"exit_zlema_neutral":' + (zlemaWentNeutral ? "true" : "false")
-    m += ',"exit_stoch_crossed":' + (stochCrossedAgainst ? "true" : "false")
-    m += ',"exit_mom_flipped":' + (momFlippedAgainst ? "true" : "false")
-    m += ',"exit_warn_fired":' + (exitWarnFired ? "true" : "false")
-    m += ',"exit_stoch_extreme":' + (stochAtExtreme ? "true" : "false")
-    m += f_indicators()
-    m += '}'
-    m
+f_barPayload() =>
+    string p = '{"relay_user":' + f_quote(aiRelayUser)
+    p += ',"relay_id":' + f_quote(aiRelayId)
+    p += ',"account":' + f_quote(aiAccount)
+    p += ',"qty":' + str.tostring(aiQty)
+    p += ',"strategy_tag":' + f_quote(aiStrategyTag)
+    p += ',"strategy":' + f_quote("PrecisionScalp")
+    p += ',"strategy_type":' + f_quote(aiStrategyType)
+    p += ',"instrument":' + f_quote(syminfo.ticker)
+    p += ',"timeframe":' + f_quote(timeframe.period)
+    p += ',"target_ticks":' + str.tostring(aiTargetTicks)
+    p += ',"stop_ticks":' + str.tostring(aiStopTicks)
+    p += ',"hard_stop_ticks":' + str.tostring(aiHardStopTicks)
+    p += ',"rr":' + str.tostring(math.round(aiTargetTicks / math.max(aiStopTicks, 1), 2))
+    p += ',"tick_value":' + str.tostring(aiTickValue)
+    // Signals (server decides whether to act on them)
+    p += ',"long_signal":' + (longSignal ? "true" : "false")
+    p += ',"short_signal":' + (shortSignal ? "true" : "false")
+    p += ',"bull_confluence":' + str.tostring(bullFilterCount)
+    p += ',"bear_confluence":' + str.tostring(bearFilterCount)
+    p += ',"long_exit_warn":' + (longExitWarn ? "true" : "false")
+    p += ',"short_exit_warn":' + (shortExitWarn ? "true" : "false")
+    // Layer flags
+    p += ',"f_zlema_trend_bull":' + (f1_bull ? "true" : "false")
+    p += ',"f_zlema_trend_bear":' + (f1_bear ? "true" : "false")
+    p += ',"f_wt_mom_bull":' + (f2_bull ? "true" : "false")
+    p += ',"f_wt_mom_bear":' + (f2_bear ? "true" : "false")
+    p += ',"f_squeeze_off":' + (sqOff ? "true" : "false")
+    p += ',"f_trending":' + (trending ? "true" : "false")
+    // Indicators
+    p += ',"zlema":' + str.tostring(math.round(zlemaVal, 2))
+    p += ',"zl_slope":' + str.tostring(math.round(zlSlope, 4))
+    p += ',"zlema_flipped_bull":' + (zlemaFlippedBull ? "true" : "false")
+    p += ',"zlema_flipped_bear":' + (zlemaFlippedBear ? "true" : "false")
+    p += ',"zlema_went_neutral":' + (zlemaWentNeutral ? "true" : "false")
+    p += ',"wt1":' + str.tostring(math.round(wt1, 2))
+    p += ',"wt2":' + str.tostring(math.round(wt2, 2))
+    p += ',"wt_bull_cross":' + (wtBullCross ? "true" : "false")
+    p += ',"wt_bear_cross":' + (wtBearCross ? "true" : "false")
+    p += ',"sq_mom":' + str.tostring(math.round(sqMom, 4))
+    p += ',"squeeze_on":' + (sqOn ? "true" : "false")
+    p += ',"mom_flipped_bull":' + (momFlippedBull ? "true" : "false")
+    p += ',"mom_flipped_bear":' + (momFlippedBear ? "true" : "false")
+    p += ',"er_val":' + str.tostring(math.round(erVal, 4))
+    p += ',"ut_trail":' + str.tostring(math.round(utTrailLine, 2))
+    p += ',"ut_flipped_bull":' + (utFlippedBull ? "true" : "false")
+    p += ',"ut_flipped_bear":' + (utFlippedBear ? "true" : "false")
+    p += ',"ema20":' + str.tostring(math.round(ema20, 2))
+    p += ',"ema50":' + str.tostring(math.round(ema50, 2))
+    p += ',"ema20_slope5":' + str.tostring(math.round(ema20Slope5, 4))
+    p += ',"price_above_ema20":' + (priceAboveEma20 ? "true" : "false")
+    p += ',"price_above_ema50":' + (priceAboveEma50 ? "true" : "false")
+    p += ',"htf_bias":' + f_quote(htfBias)
+    p += ',"rsi14":' + str.tostring(math.round(rsi14, 2))
+    p += ',"rsi_bull_div":' + (rsiBullDiv ? "true" : "false")
+    p += ',"rsi_bear_div":' + (rsiBearDiv ? "true" : "false")
+    p += ',"cci20":' + str.tostring(math.round(cci20, 2))
+    p += ',"stoch_rsi_k":' + str.tostring(math.round(stochRsiK, 2))
+    p += ',"stoch_rsi_d":' + str.tostring(math.round(stochRsiD, 2))
+    p += ',"stoch_in_ob":' + (stochInOB ? "true" : "false")
+    p += ',"stoch_in_os":' + (stochInOS ? "true" : "false")
+    p += ',"stoch_bull_cross":' + (stochBullX ? "true" : "false")
+    p += ',"stoch_bear_cross":' + (stochBearX ? "true" : "false")
+    p += ',"atr14":' + str.tostring(math.round(atr14, 4))
+    p += ',"atr_consumed_pct":' + str.tostring(math.round(atrConsumedPct, 4))
+    p += ',"bb_pctb":' + str.tostring(math.round(bbPctB, 4))
+    p += ',"bar_range_vs_atr":' + str.tostring(math.round(barRangeVsATR, 4))
+    p += ',"vol_ratio":' + str.tostring(math.round(volRatio, 2))
+    p += ',"bar_body_pct":' + str.tostring(math.round(barBodyPct, 4))
+    p += ',"bar_upper_wick_pct":' + str.tostring(math.round(barUpperWickPct, 4))
+    p += ',"bar_lower_wick_pct":' + str.tostring(math.round(barLowerWickPct, 4))
+    p += ',"bar_is_bullish":' + (barIsBullish ? "true" : "false")
+    p += ',"prev_3_pattern":' + f_quote(prev3Pattern)
+    p += ',"vwap_dist_ticks":' + str.tostring(math.round(vwapDistTicks, 1))
+    p += ',"dist_sess_high_ticks":' + str.tostring(math.round(distSessHighTicks, 1))
+    p += ',"dist_sess_low_ticks":' + str.tostring(math.round(distSessLowTicks, 1))
+    p += ',"bars_since_swing_high":' + str.tostring(barsSinceSwingHigh)
+    p += ',"bars_since_swing_low":' + str.tostring(barsSinceSwingLow)
+    p += ',"cons_range_ticks":' + str.tostring(math.round(consRangeTicks, 1))
+    p += ',"cons_range_vs_atr":' + str.tostring(math.round(consRangeVsATR, 4))
+    p += ',"last_5_closes":[' + str.tostring(math.round(c1, 2)) + ',' + str.tostring(math.round(c2, 2)) + ',' + str.tostring(math.round(c3, 2)) + ',' + str.tostring(math.round(c4, 2)) + ',' + str.tostring(math.round(c5, 2)) + ']'
+    p += ',"open":' + str.tostring(math.round(open, 2))
+    p += ',"high":' + str.tostring(math.round(high, 2))
+    p += ',"low":' + str.tostring(math.round(low, 2))
+    p += ',"close":' + str.tostring(math.round(close, 2))
+    p += ',"volume":' + str.tostring(volume)
+    p += ',"session_bucket":' + f_quote(sessionBucket)
+    p += ',"day_of_week":' + f_quote(dowStr)
+    p += ',"mins_to_maintenance":' + str.tostring(minsToMaint)
+    p += ',"price":' + str.tostring(math.round(close, 2))
+    p += '}'
+    p
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ALERTS
+// ALERT — every bar, one payload
 // ══════════════════════════════════════════════════════════════════════════════
 
-if longSignal
-    alert(f_entryPayload("LONG", bullFilterCount), alert.freq_once_per_bar_close)
-
-if shortSignal
-    alert(f_entryPayload("SHORT", bearFilterCount), alert.freq_once_per_bar_close)
-
-// Manage alerts: every bar close while in trade, skip signal bar itself
-if inPosition and barsInTrade > 0
-    alert(f_managePayload(), alert.freq_once_per_bar_close)
+if barstate.isconfirmed
+    alert(f_barPayload(), alert.freq_once_per_bar_close)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // VISUALS

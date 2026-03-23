@@ -14,6 +14,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from contextlib import asynccontextmanager
 
 import database as db
+import ai_gate
 
 # Grace period (seconds) -- if a position was opened within this window,
 # skip the CT API check and trust local ownership (prevents race conditions
@@ -35,9 +36,12 @@ logger = logging.getLogger("trade_relay")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    ai_gate_init_db()
-    logger.info(f"Trade Relay started -- database initialized (AI Gate: {'DRY RUN' if AI_DRY_RUN else 'LIVE'})")
+    ai_gate.init_db()
+    ai_gate.startup_recovery()
+    watchdog = asyncio.create_task(ai_gate.stale_position_watchdog())
+    logger.info(f"Trade Relay started -- database initialized (AI Gate: {'DRY RUN' if ai_gate.AI_DRY_RUN else 'LIVE'})")
     yield
+    watchdog.cancel()
     logger.info("Trade Relay shutting down")
 
 app = FastAPI(title="Trade Relay", lifespan=lifespan)
@@ -399,9 +403,9 @@ async def webhook(request: Request):
 async def health():
     return {
         "status": "ok",
-        "ai_gate": "dry_run" if AI_DRY_RUN else "live",
-        "ai_model": ANTHROPIC_MODEL,
-        "api_key_set": bool(ANTHROPIC_API_KEY)
+        "ai_gate": "dry_run" if ai_gate.AI_DRY_RUN else "live",
+        "ai_model": ai_gate.ANTHROPIC_MODEL,
+        "api_key_set": bool(ai_gate.ANTHROPIC_API_KEY)
     }
 
 @app.get("/positions")
@@ -588,542 +592,15 @@ async def nt_tables(request: Request, db_param: str = None):
         raise HTTPException(status_code=400, detail=f"SQL error: {str(e)}")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AI GATE — LLM CONVICTION FILTER
+# AI GATE ROUTES (thin wrappers — logic lives in ai_gate.py)
 # ══════════════════════════════════════════════════════════════════════════════
-
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_TIMEOUT = 15.0  # seconds
-
-# Dry run mode: AI evaluates and logs, but never forwards to CrossTrade.
-# Set to False (or set env AI_DRY_RUN=0) when ready to go live.
-AI_DRY_RUN = os.environ.get("AI_DRY_RUN", "1").lower() not in ("0", "false", "no")
-
-# Fields the Pine Script JSON must include for CrossTrade routing
-REQUIRED_ROUTING_FIELDS = {"relay_user", "relay_id", "account", "instrument", "signal", "qty"}
-
-# --- AI Gate database table ---
-
-_ai_migrated = False
-
-def ai_gate_init_db():
-    """Create AI gate tables if they don't exist (idempotent)."""
-    global _ai_migrated
-    if _ai_migrated:
-        return
-    conn = db.get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS ai_gate_logs (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp       TEXT NOT NULL DEFAULT (datetime('now')),
-            relay_user      TEXT,
-            relay_id        TEXT,
-            account         TEXT,
-            instrument      TEXT,
-            signal          TEXT,
-            strategy        TEXT,
-            confluence_score INTEGER,
-            alert_type      TEXT DEFAULT 'entry',
-            ai_decision     TEXT,
-            ai_reason       TEXT,
-            ai_latency_ms   INTEGER,
-            relay_result    TEXT,
-            relay_details   TEXT,
-            payload_json    TEXT,
-            ai_raw_response TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS ai_positions (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            relay_user      TEXT NOT NULL,
-            relay_id        TEXT NOT NULL,
-            account         TEXT NOT NULL,
-            instrument      TEXT NOT NULL,
-            direction       TEXT NOT NULL,
-            entry_price     REAL,
-            tick_value      REAL,
-            strategy        TEXT,
-            opened_at       TEXT NOT NULL,
-            bars_managed    INTEGER DEFAULT 0,
-            last_update     TEXT,
-            UNIQUE(relay_user, account, instrument)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS ai_trades (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            relay_user      TEXT NOT NULL,
-            relay_id        TEXT NOT NULL,
-            account         TEXT NOT NULL,
-            instrument      TEXT NOT NULL,
-            strategy        TEXT,
-            direction       TEXT NOT NULL,
-            entry_price     REAL,
-            exit_price      REAL,
-            tick_value      REAL,
-            ticks_pnl       REAL,
-            dollar_pnl      REAL,
-            bars_held       INTEGER,
-            exit_reason     TEXT,
-            opened_at       TEXT,
-            closed_at       TEXT,
-            status          TEXT DEFAULT 'open'
-        )
-    """)
-    # Migrate: add alert_type if missing
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_gate_logs)").fetchall()]
-    if "alert_type" not in cols:
-        conn.execute("ALTER TABLE ai_gate_logs ADD COLUMN alert_type TEXT DEFAULT 'entry'")
-    conn.commit()
-    conn.close()
-    _ai_migrated = True
-
-
-def ai_log_decision(
-    relay_user: str, relay_id: str, account: str, instrument: str,
-    signal: str, strategy: str, confluence_score: int,
-    ai_decision: str, ai_reason: str, ai_latency_ms: int,
-    relay_result: str = None, relay_details: str = None,
-    payload_json: str = None, ai_raw_response: str = None,
-    alert_type: str = "entry"
-):
-    ai_gate_init_db()
-    conn = db.get_connection()
-    conn.execute("""
-        INSERT INTO ai_gate_logs
-            (timestamp, relay_user, relay_id, account, instrument,
-             signal, strategy, confluence_score, alert_type,
-             ai_decision, ai_reason, ai_latency_ms,
-             relay_result, relay_details, payload_json, ai_raw_response)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        datetime.now(timezone.utc).isoformat(),
-        relay_user, relay_id, account, instrument,
-        signal, strategy, confluence_score, alert_type,
-        ai_decision, ai_reason, ai_latency_ms,
-        relay_result, relay_details, payload_json, ai_raw_response
-    ))
-    conn.commit()
-    conn.close()
-
-
-# --- AI Position Tracking ---
-
-def ai_set_position(relay_user: str, relay_id: str, account: str,
-                    instrument: str, direction: str, entry_price: float,
-                    tick_value: float, strategy: str):
-    ai_gate_init_db()
-    conn = db.get_connection()
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute("""
-        INSERT INTO ai_positions
-            (relay_user, relay_id, account, instrument, direction,
-             entry_price, tick_value, strategy, opened_at, bars_managed, last_update)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-        ON CONFLICT(relay_user, account, instrument) DO UPDATE SET
-            relay_id = excluded.relay_id,
-            direction = excluded.direction,
-            entry_price = excluded.entry_price,
-            tick_value = excluded.tick_value,
-            strategy = excluded.strategy,
-            opened_at = excluded.opened_at,
-            bars_managed = 0,
-            last_update = excluded.last_update
-    """, (relay_user, relay_id, account, instrument, direction,
-          entry_price, tick_value, strategy, now, now))
-    conn.commit()
-    conn.close()
-
-
-def ai_get_position(relay_user: str, account: str, instrument: str) -> dict | None:
-    ai_gate_init_db()
-    conn = db.get_connection()
-    row = conn.execute(
-        "SELECT * FROM ai_positions WHERE relay_user = ? AND account = ? AND instrument = ?",
-        (relay_user, account, instrument)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def ai_clear_position(relay_user: str, account: str, instrument: str):
-    ai_gate_init_db()
-    conn = db.get_connection()
-    conn.execute(
-        "DELETE FROM ai_positions WHERE relay_user = ? AND account = ? AND instrument = ?",
-        (relay_user, account, instrument)
-    )
-    conn.commit()
-    conn.close()
-
-
-def ai_increment_bars(relay_user: str, account: str, instrument: str):
-    ai_gate_init_db()
-    conn = db.get_connection()
-    conn.execute("""
-        UPDATE ai_positions SET bars_managed = bars_managed + 1, last_update = ?
-        WHERE relay_user = ? AND account = ? AND instrument = ?
-    """, (datetime.now(timezone.utc).isoformat(), relay_user, account, instrument))
-    conn.commit()
-    conn.close()
-
-
-def ai_list_positions(relay_user: str = None) -> list[dict]:
-    ai_gate_init_db()
-    conn = db.get_connection()
-    if relay_user:
-        rows = conn.execute(
-            "SELECT * FROM ai_positions WHERE relay_user = ?", (relay_user,)
-        ).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM ai_positions").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-# --- AI Trade Tracking ---
-
-def ai_open_trade(relay_user: str, relay_id: str, account: str,
-                  instrument: str, strategy: str, direction: str,
-                  entry_price: float, tick_value: float) -> int:
-    """Record a new trade when AI agrees to enter. Returns trade id."""
-    ai_gate_init_db()
-    conn = db.get_connection()
-    now = datetime.now(timezone.utc).isoformat()
-    cursor = conn.execute("""
-        INSERT INTO ai_trades
-            (relay_user, relay_id, account, instrument, strategy,
-             direction, entry_price, tick_value, opened_at, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
-    """, (relay_user, relay_id, account, instrument, strategy,
-          direction, entry_price, tick_value, now))
-    trade_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return trade_id
-
-
-def ai_close_trade(relay_user: str, account: str, instrument: str,
-                   exit_price: float, exit_reason: str, bars_held: int = 0,
-                   ticks_pnl: float = None):
-    """Close the most recent open trade for this position."""
-    ai_gate_init_db()
-    conn = db.get_connection()
-    now = datetime.now(timezone.utc).isoformat()
-
-    # Find the open trade
-    row = conn.execute("""
-        SELECT id, direction, entry_price, tick_value FROM ai_trades
-        WHERE relay_user = ? AND account = ? AND instrument = ? AND status = 'open'
-        ORDER BY id DESC LIMIT 1
-    """, (relay_user, account, instrument)).fetchone()
-
-    if row:
-        trade = dict(row)
-        tick_value = trade["tick_value"] or 10.0
-
-        # Use provided ticks_pnl if available, otherwise estimate
-        if ticks_pnl is None:
-            entry_price = trade["entry_price"] or 0
-            direction = trade["direction"]
-            if direction == "long":
-                ticks_pnl = exit_price - entry_price
-            else:
-                ticks_pnl = entry_price - exit_price
-
-        dollar_pnl = ticks_pnl * tick_value
-
-        conn.execute("""
-            UPDATE ai_trades SET
-                exit_price = ?, ticks_pnl = ?, dollar_pnl = ?,
-                bars_held = ?, exit_reason = ?, closed_at = ?, status = 'closed'
-            WHERE id = ?
-        """, (exit_price, round(ticks_pnl, 2), round(dollar_pnl, 2),
-              bars_held, exit_reason, now, trade["id"]))
-
-    conn.commit()
-    conn.close()
-
-
-def ai_get_trades(relay_user: str = None, limit: int = 50) -> list[dict]:
-    ai_gate_init_db()
-    conn = db.get_connection()
-    if relay_user:
-        rows = conn.execute(
-            "SELECT * FROM ai_trades WHERE relay_user = ? ORDER BY id DESC LIMIT ?",
-            (relay_user, limit)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM ai_trades ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def ai_get_trade_stats(relay_user: str = None) -> dict:
-    ai_gate_init_db()
-    conn = db.get_connection()
-    where = "WHERE relay_user = ? AND status = 'closed'" if relay_user else "WHERE status = 'closed'"
-    params = (relay_user,) if relay_user else ()
-
-    row = conn.execute(f"""
-        SELECT
-            COUNT(*) as total,
-            SUM(CASE WHEN dollar_pnl > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN dollar_pnl <= 0 THEN 1 ELSE 0 END) as losses,
-            SUM(dollar_pnl) as total_pnl,
-            AVG(dollar_pnl) as avg_pnl,
-            MAX(dollar_pnl) as best_trade,
-            MIN(dollar_pnl) as worst_trade,
-            AVG(bars_held) as avg_bars
-        FROM ai_trades {where}
-    """, params).fetchone()
-
-    conn.close()
-    if row:
-        d = dict(row)
-        d["win_rate"] = round(d["wins"] / d["total"] * 100, 1) if d["total"] > 0 else 0
-        return d
-    return {"total": 0, "wins": 0, "losses": 0, "total_pnl": 0}
-
-
-def ai_get_logs(relay_user: str = None, limit: int = 50) -> list[dict]:
-    ai_gate_init_db()
-    conn = db.get_connection()
-    if relay_user:
-        rows = conn.execute(
-            "SELECT * FROM ai_gate_logs WHERE relay_user = ? ORDER BY id DESC LIMIT ?",
-            (relay_user, limit)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM ai_gate_logs ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-# --- Anthropic API ---
-
-AI_SYSTEM_PROMPT = """You are a trade conviction filter for algorithmic futures trading. You receive a JSON payload of technical indicator values computed at the moment a trading strategy fires a signal. Your job is to decide whether the signal has enough edge to execute.
-
-You are NOT predicting whether price will go up or down. You are evaluating whether the CURRENT INDICATOR CONTEXT supports this specific strategy's signal type and trade profile.
-
-## Decision Framework
-
-AGREE when:
-- The majority of indicators align with the signal direction
-- Momentum, trend, and volatility context support the trade thesis
-- The risk/reward profile is reasonable given current conditions
-- Session timing and market structure don't present obvious headwinds
-
-DISAGREE when:
-- Key indicators contradict the signal direction (e.g., LONG signal but HTF bearish, RSI overbought, price at session highs)
-- Volatility is extreme and working against the trade (e.g., ATR already overextended for a mean-reversion scalp)
-- Session timing is unfavorable (midday chop for momentum trades, close for new positions)
-- Candle structure on the signal bar is adverse (e.g., LONG but strong upper wick rejection)
-- Consolidation is too tight (no volatility to capture) or too wide (no clear direction)
-
-## Strategy Type Calibration
-- **scalp**: Be more permissive on trend alignment. Mean-reversion against short-term extremes is valid. Focus on volatility, overextension, and candle structure.
-- **swing**: Require trend alignment. HTF bias must match signal direction. Reject counter-trend entries unless divergence is strong.
-- **trend**: Require strong trend alignment across all timeframes. Only agree when momentum, trend, and structure are all aligned.
-
-## Response Format
-Respond with EXACTLY this format — no extra text, no markdown:
-
-DECISION: AGREE
-REASON: [one concise sentence explaining why]
-
-or
-
-DECISION: DISAGREE
-REASON: [one concise sentence explaining why]"""
-
-
-AI_MANAGE_PROMPT = """You are a trade exit manager for algorithmic futures trading. You receive a JSON payload every bar while a trade is open. Your job is to decide whether to EXIT the trade now or HOLD.
-
-The payload includes the current indicator state, position P&L, and a pre-computed exit_score based on these conditions:
-
-## Exit Score Components
-| Condition                              | Points |
-|----------------------------------------|--------|
-| ZLEMA trend flipped against position   | +3     |
-| UT Bot trail flipped against position  | +3     |
-| ZLEMA went neutral                     | +2     |
-| Stoch RSI crossed against position     | +2     |
-| Squeeze momentum flipped against       | +2     |
-| Exit warning fired (WT extreme)        | +2     |
-| Stoch RSI hit extreme zone             | +1     |
-
-## Profit-Tiered Exit Thresholds
-The bigger the profit, the less adversity you tolerate:
-
-| Unrealized Profit        | Exit Score Needed |
-|--------------------------|-------------------|
-| Under 10 ticks           | Don't exit — too small to take |
-| 10-20 ticks              | Score >= 5        |
-| 20-50 ticks              | Score >= 4        |
-| 50-100 ticks             | Score >= 3        |
-| 100-150 ticks            | Score >= 2        |
-| 150+ ticks               | Score >= 1 (hair trigger) |
-
-## Safety Nets (handled server-side, but note them)
-- Hard stop: hit max adverse ticks → instant exit (server handles this)
-- Time stop: max bars exceeded → exit (server handles this)
-- Early exit: losing 15+ ticks AND score >= 3 → exit
-
-## Your Decision
-Use the exit_score AND the indicator context together. The exit_score gives you a structured read, but you can override:
-- HOLD even with a high score if indicators show the adverse move is exhausting (e.g., oversold bounce forming in your favor)
-- EXIT even with a low score if you see a clear structural breakdown that the score doesn't capture
-
-## Response Format
-Respond with EXACTLY this format — no extra text, no markdown:
-
-DECISION: EXIT
-REASON: [one concise sentence]
-
-or
-
-DECISION: HOLD
-REASON: [one concise sentence]"""
-
-
-def _build_ai_user_message(payload: dict) -> str:
-    """Build the user message for the AI from the indicator payload."""
-    routing_keys = {"relay_user", "relay_id", "account", "qty",
-                    "order_type", "tif", "out_of_sync", "sync_strategy",
-                    "strategy_tag", "alert_type"}
-    indicator_data = {k: v for k, v in payload.items() if k not in routing_keys}
-    return f"Signal payload:\n{json.dumps(indicator_data, indent=2)}"
-
-
-async def call_anthropic(payload: dict, system_prompt: str = None) -> tuple[str, str, int, str]:
-    """Call Anthropic API with indicator payload.
-
-    Returns: (decision, reason, latency_ms, raw_response)
-    """
-    if not ANTHROPIC_API_KEY:
-        return "ERROR", "ANTHROPIC_API_KEY not set", 0, ""
-
-    user_msg = _build_ai_user_message(payload)
-
-    request_body = {
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": 150,
-        "system": system_prompt or AI_SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_msg}]
-    }
-
-    start = datetime.now(timezone.utc)
-
-    try:
-        async with httpx.AsyncClient(timeout=ANTHROPIC_TIMEOUT) as client:
-            resp = await client.post(
-                ANTHROPIC_URL,
-                json=request_body,
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                }
-            )
-
-        latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
-
-        if resp.status_code != 200:
-            error_text = resp.text[:300]
-            logger.error(f"Anthropic API {resp.status_code}: {error_text}")
-            return "ERROR", f"API returned {resp.status_code}", latency_ms, error_text
-
-        data = resp.json()
-        raw_text = ""
-        for block in data.get("content", []):
-            if block.get("type") == "text":
-                raw_text += block.get("text", "")
-
-        # Parse decision
-        decision = "UNKNOWN"
-        reason = raw_text.strip()
-
-        for line in raw_text.strip().splitlines():
-            line = line.strip()
-            if line.upper().startswith("DECISION:"):
-                val = line.split(":", 1)[1].strip().upper()
-                if val == "EXIT":
-                    decision = "EXIT"
-                elif val == "HOLD":
-                    decision = "HOLD"
-                elif "AGREE" in val and "DISAGREE" not in val:
-                    decision = "AGREE"
-                elif "DISAGREE" in val:
-                    decision = "DISAGREE"
-            elif line.upper().startswith("REASON:"):
-                reason = line.split(":", 1)[1].strip()
-
-        return decision, reason, latency_ms, raw_text
-
-    except httpx.TimeoutException:
-        latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
-        logger.error(f"Anthropic API timeout after {latency_ms}ms")
-        return "TIMEOUT", "API call timed out", latency_ms, ""
-    except Exception as e:
-        latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
-        logger.error(f"Anthropic API error: {e}")
-        return "ERROR", str(e), latency_ms, ""
-
-
-def build_ct_fields(payload: dict) -> dict:
-    """Convert JSON signal payload into the field dict that process_signal() expects."""
-    signal = payload.get("signal", "").upper()
-
-    if signal == "LONG":
-        action = "BUY"
-        market_position = "long"
-        prev_market_position = "flat"
-    elif signal == "SHORT":
-        action = "SELL"
-        market_position = "short"
-        prev_market_position = "flat"
-    else:
-        action = signal
-        market_position = signal.lower()
-        prev_market_position = "flat"
-
-    return {
-        "relay_user": payload.get("relay_user", ""),
-        "relay_id": payload.get("relay_id", ""),
-        "command": payload.get("command", "PLACE"),
-        "account": payload.get("account", ""),
-        "instrument": payload.get("instrument", ""),
-        "action": action,
-        "qty": str(payload.get("qty", 1)),
-        "order_type": payload.get("order_type", "MARKET"),
-        "tif": payload.get("tif", "DAY"),
-        "sync_strategy": payload.get("sync_strategy", "true"),
-        "market_position": market_position,
-        "prev_market_position": prev_market_position,
-        "out_of_sync": payload.get("out_of_sync", "flatten"),
-        "strategy_tag": payload.get("strategy_tag", payload.get("relay_id", "")),
-    }
-
-
-# --- AI Gate Routes ---
 
 @app.post("/webhook/ai")
 async def webhook_ai(request: Request):
-    """AI Gate webhook — receives JSON from Pine Script.
-
-    Returns 200 immediately to avoid TradingView timeout.
-    AI processing happens in the background.
+    """AI Gate webhook — receives bar data JSON from Pine Script v2.0.0.
+    Returns 200 immediately; processing happens in the background.
+    Server decides: enter, hold, exit, or skip.
     """
-    ai_gate_init_db()
-
-    # --- Parse body ---
     body = await request.body()
     body_text = body.decode("utf-8").strip()
 
@@ -1135,424 +612,55 @@ async def webhook_ai(request: Request):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
-    alert_type = payload.get("alert_type", "entry")
-
-    # Quick validation before returning
-    if alert_type == "entry":
-        missing = REQUIRED_ROUTING_FIELDS - set(payload.keys())
-        if missing:
-            raise HTTPException(status_code=400, detail=f"Missing fields: {', '.join(missing)}")
-        relay_user = payload.get("relay_user", "")
-        user = db.get_user(relay_user)
-        if not user:
-            raise HTTPException(status_code=400, detail=f"Unknown relay_user: {relay_user}")
-
-    # Fire background task and return immediately
-    asyncio.create_task(_process_ai_alert(payload, body_text, alert_type))
-
-    return JSONResponse(content={"status": "received", "alert_type": alert_type})
-
-
-async def _process_ai_alert(payload: dict, body_text: str, alert_type: str):
-    """Background worker — processes entry or manage alerts asynchronously."""
-    try:
-        if alert_type == "manage":
-            await _handle_manage(payload, body_text)
-        else:
-            await _handle_entry(payload, body_text)
-    except Exception as e:
-        logger.error(f"Background AI processing error: {e}")
-
-
-async def _handle_entry(payload: dict, body_text: str):
-    """Process an entry signal through the AI gate."""
-    relay_user = payload["relay_user"]
-    relay_id = payload["relay_id"]
-    account = payload["account"]
-    instrument = payload["instrument"]
-    signal = payload["signal"]
-    strategy = payload.get("strategy", "unknown")
-    confluence = payload.get("confluence_score", 0)
-
-    logger.info(f"[{relay_user}/{relay_id}] AI Gate received {signal} signal for {instrument}")
-
-    # --- Call Anthropic ---
-    ai_decision, ai_reason, ai_latency_ms, ai_raw = await call_anthropic(payload)
-
-    logger.info(
-        f"[{relay_user}/{relay_id}] AI decision: {ai_decision} "
-        f"({ai_latency_ms}ms) — {ai_reason}"
-    )
-
-    # --- Gate logic ---
-    relay_result = None
-    relay_details = None
-
-    if ai_decision == "AGREE":
-        # Track AI position for manage alerts
-        entry_price = payload.get("price", 0)
-        tick_value = payload.get("tick_value", 10.0)
-        ai_set_position(
-            relay_user, relay_id, account, instrument,
-            signal.lower(), entry_price, tick_value, strategy
-        )
-        # Record trade for P&L tracking
-        ai_open_trade(
-            relay_user, relay_id, account, instrument, strategy,
-            signal.lower(), entry_price, tick_value
-        )
-
-        if AI_DRY_RUN:
-            relay_result = "dry_run"
-            relay_details = f"AI agreed but DRY RUN — would have forwarded {signal} to CrossTrade"
-            logger.info(
-                f"[{relay_user}/{relay_id}] AI AGREED (DRY RUN) — not forwarding to CrossTrade"
-            )
-        else:
-            ct_fields = build_ct_fields(payload)
-            relay_response = await process_signal(ct_fields, raw_payload=body_text)
-            relay_result = relay_response.get("result", "unknown")
-            relay_details = relay_response.get("details", "")
-            logger.info(
-                f"[{relay_user}/{relay_id}] AI AGREED → relay: {relay_result} — {relay_details}"
-            )
-
-    elif ai_decision == "DISAGREE":
-        relay_result = "ai_rejected"
-        relay_details = f"AI disagreed: {ai_reason}"
-        logger.info(f"[{relay_user}/{relay_id}] AI DISAGREED — signal rejected")
-
-    elif ai_decision == "TIMEOUT":
-        relay_result = "ai_timeout"
-        relay_details = f"AI timed out after {ai_latency_ms}ms — signal rejected"
-        logger.warning(f"[{relay_user}/{relay_id}] AI TIMEOUT — signal rejected")
-
-    else:
-        relay_result = "ai_error"
-        relay_details = f"AI error: {ai_reason}"
-        logger.error(f"[{relay_user}/{relay_id}] AI ERROR — signal rejected: {ai_reason}")
-
-    # --- Log ---
-    ai_log_decision(
-        relay_user=relay_user,
-        relay_id=relay_id,
-        account=account,
-        instrument=instrument,
-        signal=signal,
-        strategy=strategy,
-        confluence_score=confluence,
-        ai_decision=ai_decision,
-        ai_reason=ai_reason,
-        ai_latency_ms=ai_latency_ms,
-        relay_result=relay_result,
-        relay_details=relay_details,
-        payload_json=body_text,
-        ai_raw_response=ai_raw,
-        alert_type="entry"
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# AI GATE — MANAGE ENDPOINT (per-bar exit management)
-# ══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/webhook/ai/manage")
-async def webhook_ai_manage(request: Request):
-    """AI Manage webhook — direct endpoint. Returns immediately, processes in background."""
-    body = await request.body()
-    body_text = body.decode("utf-8").strip()
-    if not body_text:
-        raise HTTPException(status_code=400, detail="Empty payload")
-    try:
-        payload = json.loads(body_text)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
-    asyncio.create_task(_handle_manage(payload, body_text))
-    return JSONResponse(content={"status": "received", "alert_type": "manage"})
-
-
-async def _handle_manage(payload: dict, body_text: str):
-    """Internal manage handler — per-bar exit management.
-
-    Flow:
-        1. Parse JSON payload (alert_type == "manage")
-        2. Check if an AI-tracked position exists
-        3. Check server-side safety nets (hard stop, time stop, early exit)
-        4. If safety net triggers → EXIT immediately, no AI call
-        5. Otherwise → call Anthropic with manage prompt
-        6. If EXIT → send flatten to CrossTrade (or log in dry run)
-        7. If HOLD → log and continue
-    """
-    ai_gate_init_db()
+    missing = ai_gate.REQUIRED_BAR_FIELDS - set(payload.keys())
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing fields: {', '.join(missing)}")
 
     relay_user = payload.get("relay_user", "")
-    relay_id = payload.get("relay_id", "")
-    account = payload.get("account", "")
-    instrument = payload.get("instrument", "")
-    strategy = payload.get("strategy", "unknown")
+    user = db.get_user(relay_user)
+    if not user:
+        raise HTTPException(status_code=400, detail=f"Unknown relay_user: {relay_user}")
 
-    if not relay_user or not account or not instrument:
-        raise HTTPException(status_code=400, detail="Missing relay_user, account, or instrument")
-
-    # --- Check for tracked AI position ---
-    ai_pos = ai_get_position(relay_user, account, instrument)
-    if not ai_pos:
-        # No AI position — Pine is tracking locally but AI never agreed to enter.
-        # Silently ignore.
-        return JSONResponse(content={
-            "ai_decision": "IGNORED",
-            "ai_reason": "No AI-tracked position exists",
-            "relay_result": "no_position"
-        })
-
-    # Use server-tracked entry price as source of truth, fall back to payload
-    entry_price = ai_pos.get("entry_price", 0)
-    tick_value = ai_pos.get("tick_value", 10.0)
-    direction = ai_pos.get("direction", "")
-    bars_managed = ai_pos.get("bars_managed", 0)
-
-    # Get current price and P&L from payload
-    current_price = payload.get("price", 0)
-    unrealized_ticks = payload.get("unrealized_ticks", 0)
-    unrealized_dollars = payload.get("unrealized_dollars", 0)
-    exit_score = payload.get("exit_score", 0)
-    hard_stop_ticks = payload.get("hard_stop_ticks", 25)
-    max_bars_hold = payload.get("max_bars_hold", 60)
-    bars_in_trade = payload.get("bars_in_trade", bars_managed)
-
-    logger.info(
-        f"[{relay_user}/{relay_id}] MANAGE bar {bars_in_trade}: "
-        f"{direction} @ {entry_price} → P&L {unrealized_ticks:.1f} ticks "
-        f"(${unrealized_dollars:.2f}), exit_score={exit_score}"
-    )
-
-    ai_increment_bars(relay_user, account, instrument)
-
-    # --- Server-side safety nets (no AI call needed) ---
-    safety_exit = False
-    safety_reason = ""
-
-    # Hard stop
-    if unrealized_ticks <= -abs(hard_stop_ticks):
-        safety_exit = True
-        safety_reason = f"HARD STOP hit: {unrealized_ticks:.1f} ticks (limit: -{hard_stop_ticks})"
-
-    # Time stop
-    elif bars_in_trade >= max_bars_hold:
-        safety_exit = True
-        safety_reason = f"TIME STOP: {bars_in_trade} bars (limit: {max_bars_hold})"
-
-    # Early exit: losing 15+ ticks AND score >= 3
-    elif unrealized_ticks <= -15 and exit_score >= 3:
-        safety_exit = True
-        safety_reason = f"EARLY EXIT: losing {unrealized_ticks:.1f} ticks with exit_score={exit_score}"
-
-    if safety_exit:
-        logger.info(f"[{relay_user}/{relay_id}] SAFETY NET → {safety_reason}")
-
-        relay_result = "safety_exit"
-        if not AI_DRY_RUN:
-            # Send flatten to CrossTrade
-            user = db.get_user(relay_user)
-            if user:
-                flatten_fields = {
-                    "relay_user": relay_user,
-                    "relay_id": relay_id,
-                    "command": "PLACE",
-                    "account": account,
-                    "instrument": instrument,
-                    "action": "SELL" if direction == "long" else "BUY",
-                    "qty": str(payload.get("qty", 1)),
-                    "order_type": "MARKET",
-                    "tif": "DAY",
-                    "market_position": "flat",
-                    "prev_market_position": direction,
-                    "sync_strategy": "true",
-                    "out_of_sync": "flatten",
-                    "strategy_tag": payload.get("strategy_tag", relay_id),
-                }
-                await process_signal(flatten_fields, raw_payload=body_text)
-            relay_result = "safety_exit_forwarded"
-        else:
-            relay_result = "safety_exit_dry_run"
-
-        ai_close_trade(relay_user, account, instrument, current_price, safety_reason, bars_in_trade, ticks_pnl=unrealized_ticks)
-        ai_clear_position(relay_user, account, instrument)
-
-        ai_log_decision(
-            relay_user=relay_user, relay_id=relay_id,
-            account=account, instrument=instrument,
-            signal="EXIT", strategy=strategy, confluence_score=exit_score,
-            ai_decision="SAFETY_EXIT", ai_reason=safety_reason,
-            ai_latency_ms=0, relay_result=relay_result,
-            relay_details=safety_reason,
-            payload_json=body_text, alert_type="manage"
-        )
-
-        return JSONResponse(content={
-            "ai_decision": "SAFETY_EXIT",
-            "ai_reason": safety_reason,
-            "ai_latency_ms": 0,
-            "relay_result": relay_result,
-            "dry_run": AI_DRY_RUN
-        })
-
-    # --- Call Anthropic for exit decision ---
-    ai_decision, ai_reason, ai_latency_ms, ai_raw = await call_anthropic(
-        payload, system_prompt=AI_MANAGE_PROMPT
-    )
-
-    logger.info(
-        f"[{relay_user}/{relay_id}] AI manage decision: {ai_decision} "
-        f"({ai_latency_ms}ms) — {ai_reason}"
-    )
-
-    relay_result = None
-    relay_details = None
-
-    if ai_decision == "EXIT":
-        if AI_DRY_RUN:
-            relay_result = "exit_dry_run"
-            relay_details = f"AI says EXIT but DRY RUN — P&L: {unrealized_ticks:.1f} ticks (${unrealized_dollars:.2f})"
-        else:
-            user = db.get_user(relay_user)
-            if user:
-                flatten_fields = {
-                    "relay_user": relay_user,
-                    "relay_id": relay_id,
-                    "command": "PLACE",
-                    "account": account,
-                    "instrument": instrument,
-                    "action": "SELL" if direction == "long" else "BUY",
-                    "qty": str(payload.get("qty", 1)),
-                    "order_type": "MARKET",
-                    "tif": "DAY",
-                    "market_position": "flat",
-                    "prev_market_position": direction,
-                    "sync_strategy": "true",
-                    "out_of_sync": "flatten",
-                    "strategy_tag": payload.get("strategy_tag", relay_id),
-                }
-                relay_response = await process_signal(flatten_fields, raw_payload=body_text)
-                relay_result = f"exit_{relay_response.get('result', 'unknown')}"
-                relay_details = relay_response.get("details", "")
-            else:
-                relay_result = "exit_error"
-                relay_details = f"Unknown user: {relay_user}"
-
-        ai_close_trade(relay_user, account, instrument, current_price, f"AI EXIT: {ai_reason}", bars_in_trade, ticks_pnl=unrealized_ticks)
-        ai_clear_position(relay_user, account, instrument)
-        logger.info(f"[{relay_user}/{relay_id}] AI EXIT → position cleared")
-
-    elif ai_decision == "HOLD":
-        relay_result = "hold"
-        relay_details = f"Holding — bar {bars_in_trade}, P&L: {unrealized_ticks:.1f} ticks"
-
-    elif ai_decision == "TIMEOUT":
-        # On timeout during manage, HOLD (conservative = don't panic-exit)
-        relay_result = "hold_timeout"
-        relay_details = f"AI timed out — holding by default"
-        logger.warning(f"[{relay_user}/{relay_id}] AI TIMEOUT during manage — holding")
-
-    else:
-        relay_result = "hold_error"
-        relay_details = f"AI error during manage — holding: {ai_reason}"
-        logger.error(f"[{relay_user}/{relay_id}] AI ERROR during manage — holding")
-
-    # --- Log ---
-    ai_log_decision(
-        relay_user=relay_user, relay_id=relay_id,
-        account=account, instrument=instrument,
-        signal=ai_decision, strategy=strategy,
-        confluence_score=exit_score,
-        ai_decision=ai_decision, ai_reason=ai_reason,
-        ai_latency_ms=ai_latency_ms,
-        relay_result=relay_result, relay_details=relay_details,
-        payload_json=body_text, ai_raw_response=ai_raw,
-        alert_type="manage"
-    )
-
-    return JSONResponse(content={
-        "ai_decision": ai_decision,
-        "ai_reason": ai_reason,
-        "ai_latency_ms": ai_latency_ms,
-        "relay_result": relay_result,
-        "relay_details": relay_details,
-        "bars_in_trade": bars_in_trade,
-        "unrealized_ticks": unrealized_ticks,
-        "exit_score": exit_score,
-        "dry_run": AI_DRY_RUN
-    })
+    asyncio.create_task(ai_gate.process_bar(payload, body_text))
+    return JSONResponse(content={"status": "received"})
 
 
 @app.get("/webhook/ai/logs")
 async def ai_logs_endpoint(relay_user: str = None, limit: int = 50):
-    """View AI gate decision logs."""
-    return ai_get_logs(relay_user, limit)
+    return ai_gate.get_logs(relay_user, limit)
 
 
 @app.get("/webhook/ai/stats")
 async def ai_stats_endpoint(relay_user: str = None):
-    """Quick stats on AI gate decisions."""
-    ai_gate_init_db()
-    conn = db.get_connection()
-
-    where = "WHERE relay_user = ?" if relay_user else ""
-    params = (relay_user,) if relay_user else ()
-
-    rows = conn.execute(f"""
-        SELECT
-            ai_decision,
-            COUNT(*) as count,
-            AVG(ai_latency_ms) as avg_latency_ms
-        FROM ai_gate_logs
-        {where}
-        GROUP BY ai_decision
-    """, params).fetchall()
-
-    total = conn.execute(
-        f"SELECT COUNT(*) as total FROM ai_gate_logs {where}", params
-    ).fetchone()
-
-    conn.close()
-
-    stats = {row["ai_decision"]: {"count": row["count"], "avg_latency_ms": round(row["avg_latency_ms"])}
-             for row in rows}
-    stats["total"] = total["total"] if total else 0
-
-    return stats
+    return ai_gate.get_stats(relay_user)
 
 
 @app.get("/webhook/ai/positions")
 async def ai_positions_endpoint(relay_user: str = None):
-    """View AI-tracked open positions."""
-    return ai_list_positions(relay_user)
+    return ai_gate.list_positions(relay_user)
 
 
 @app.post("/webhook/ai/positions/clear")
 async def ai_positions_clear(request: Request):
-    """Manually clear an AI-tracked position."""
     data = await request.json()
     relay_user = data.get("relay_user", "")
     account = data.get("account", "")
     instrument = data.get("instrument", "")
     if not relay_user or not account or not instrument:
         raise HTTPException(status_code=400, detail="Missing relay_user, account, or instrument")
-    ai_clear_position(relay_user, account, instrument)
+    ai_gate.clear_position(relay_user, account, instrument)
     logger.info(f"AI position cleared: {relay_user}/{account}/{instrument}")
     return {"status": "ok", "details": "AI position cleared"}
 
 
 @app.get("/webhook/ai/trades")
 async def ai_trades_endpoint(relay_user: str = None, limit: int = 50):
-    """View AI trade history."""
-    return ai_get_trades(relay_user, limit)
+    return ai_gate.get_trades(relay_user, limit)
 
 
 @app.get("/webhook/ai/trades/stats")
 async def ai_trade_stats_endpoint(relay_user: str = None):
-    """Trade performance stats."""
-    return ai_get_trade_stats(relay_user)
+    return ai_gate.get_trade_stats(relay_user)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
