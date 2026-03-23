@@ -698,6 +698,12 @@ async def cvd_instrument(instrument: str):
     return cvd.get_cvd(instrument)
 
 
+@app.get("/cvd/{instrument}/candles")
+async def cvd_candles(instrument: str):
+    """Get 1-min candles for charting."""
+    return cvd.get_candles(instrument)
+
+
 @app.post("/cvd/reset")
 async def cvd_reset(instrument: str = None):
     """Reset CVD to zero."""

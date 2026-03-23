@@ -29,6 +29,10 @@ HISTORY_SECONDS = 300  # 5 minutes of snapshots
 _cvd_state: dict[str, dict] = {}
 # Rolling history: deque of (timestamp, cvd_value, price) per instrument
 _cvd_history: dict[str, deque] = {}
+# 1-minute candle aggregation
+_candles: dict[str, list] = {}        # completed candles per instrument
+_current_candle: dict[str, dict] = {} # in-progress candle per instrument
+MAX_CANDLES = 120                      # keep 2 hours of 1-min bars
 _subscribed_instruments: set[str] = set()
 _ws_task: asyncio.Task | None = None
 _ws_connected = False
@@ -235,6 +239,63 @@ def _process_quote(quote: dict):
     # Append to rolling history
     history = _get_history(instrument)
     history.append((time.time(), state["cvd"], last))
+
+    # Update 1-minute candle
+    _update_candle(instrument, last, delta)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1-MINUTE CANDLE AGGREGATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _current_minute() -> int:
+    """Get current time floored to the minute as unix timestamp."""
+    now = int(time.time())
+    return now - (now % 60)
+
+
+def _update_candle(instrument: str, price: float, cvd_delta: int):
+    """Update the current 1-minute candle with a new tick."""
+    minute_ts = _current_minute()
+
+    if instrument not in _candles:
+        _candles[instrument] = []
+
+    candle = _current_candle.get(instrument)
+
+    # New minute — close previous candle, start new one
+    if candle is None or candle["time"] != minute_ts:
+        # Save completed candle
+        if candle is not None:
+            _candles[instrument].append(candle)
+            # Trim to max
+            if len(_candles[instrument]) > MAX_CANDLES:
+                _candles[instrument] = _candles[instrument][-MAX_CANDLES:]
+
+        # Start new candle
+        _current_candle[instrument] = {
+            "time": minute_ts,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "cvd_delta": cvd_delta,
+        }
+    else:
+        # Update current candle
+        candle["high"] = max(candle["high"], price)
+        candle["low"] = min(candle["low"], price)
+        candle["close"] = price
+        candle["cvd_delta"] += cvd_delta
+
+
+def get_candles(instrument: str) -> list[dict]:
+    """Get completed 1-min candles + current in-progress candle."""
+    completed = _candles.get(instrument, [])
+    current = _current_candle.get(instrument)
+    if current:
+        return completed + [current]
+    return completed
 
 
 # ══════════════════════════════════════════════════════════════════════════════
