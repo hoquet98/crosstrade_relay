@@ -106,10 +106,11 @@ def compute_dollar_pnl(instrument: str, direction: str,
 
 
 # Position management
-HARD_STOP_TICKS = 25
-MAX_BARS_HOLD = 60
-EARLY_EXIT_TICKS = -15
-EARLY_EXIT_SCORE = 3
+# Defaults — overridden by payload values if present
+DEFAULT_HARD_STOP_TICKS = 100
+DEFAULT_MAX_BARS_HOLD = 60
+DEFAULT_EARLY_EXIT_TICKS = -60
+DEFAULT_EARLY_EXIT_SCORE = 3
 STALE_TIMEOUT_SECONDS = 300  # 5 minutes
 AI_MANAGE_INTERVAL = 5       # call AI every N bars even if nothing happened
 
@@ -602,8 +603,8 @@ def _build_manage_message(payload: dict, position: dict,
         "unrealized_dollars": dollar_pnl,
         "exit_score": exit_score,
         "bars_in_trade": bar_count,
-        "hard_stop_ticks": HARD_STOP_TICKS,
-        "max_bars_hold": MAX_BARS_HOLD,
+        "hard_stop_ticks": payload.get("hard_stop_ticks", DEFAULT_HARD_STOP_TICKS),
+        "max_bars_hold": payload.get("max_bars_hold", DEFAULT_MAX_BARS_HOLD),
     }
     # Add all indicators from payload
     for k, v in payload.items():
@@ -1186,11 +1187,15 @@ async def _handle_manage(payload: dict, body_text: str, position: dict):
             )
             return
 
-    # --- Safety nets (no AI call) ---
+    # --- Safety nets (no AI call) — thresholds from strategy payload ---
+    hard_stop = payload.get("hard_stop_ticks", DEFAULT_HARD_STOP_TICKS)
+    max_bars = payload.get("max_bars_hold", DEFAULT_MAX_BARS_HOLD)
+    early_exit_ticks = payload.get("early_exit_ticks", DEFAULT_EARLY_EXIT_TICKS)
+    early_exit_score = payload.get("early_exit_score", DEFAULT_EARLY_EXIT_SCORE)
 
     # Hard stop
-    if ticks_pnl <= -abs(HARD_STOP_TICKS):
-        reason = f"HARD STOP: {ticks_pnl:.1f} ticks (limit: -{HARD_STOP_TICKS})"
+    if ticks_pnl <= -abs(hard_stop):
+        reason = f"HARD STOP: {ticks_pnl:.1f} ticks (limit: -{hard_stop})"
         await _force_close(position, current_price, reason, payload)
         _log_decision(
             relay_user=relay_user, relay_id=relay_id,
@@ -1204,8 +1209,8 @@ async def _handle_manage(payload: dict, body_text: str, position: dict):
         return
 
     # Time stop
-    if bar_count >= MAX_BARS_HOLD:
-        reason = f"TIME STOP: {bar_count} bars (limit: {MAX_BARS_HOLD})"
+    if bar_count >= max_bars:
+        reason = f"TIME STOP: {bar_count} bars (limit: {max_bars})"
         await _force_close(position, current_price, reason, payload)
         _log_decision(
             relay_user=relay_user, relay_id=relay_id,
@@ -1218,8 +1223,8 @@ async def _handle_manage(payload: dict, body_text: str, position: dict):
         )
         return
 
-    # Early exit: losing 15+ ticks AND high exit score
-    if ticks_pnl <= EARLY_EXIT_TICKS and exit_score >= EARLY_EXIT_SCORE:
+    # Early exit: losing N+ ticks AND high exit score
+    if ticks_pnl <= early_exit_ticks and exit_score >= early_exit_score:
         reason = f"EARLY EXIT: {ticks_pnl:.1f} ticks with exit_score={exit_score}"
         await _force_close(position, current_price, reason, payload)
         _log_decision(
