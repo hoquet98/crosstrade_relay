@@ -12,6 +12,8 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 
+import ai_gate
+
 logger = logging.getLogger("trade_relay")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -32,7 +34,7 @@ _cvd_history: dict[str, deque] = {}
 # 1-minute candle aggregation
 _candles: dict[str, list] = {}        # completed candles per instrument
 _current_candle: dict[str, dict] = {} # in-progress candle per instrument
-MAX_CANDLES = 120                      # keep 2 hours of 1-min bars
+MAX_CANDLES = 480                      # keep 8 hours of 1-min bars
 _subscribed_instruments: set[str] = set()
 _ws_task: asyncio.Task | None = None
 _ws_connected = False
@@ -272,6 +274,22 @@ def _update_candle(instrument: str, price: float, cvd_delta: int):
             if len(_candles[instrument]) > MAX_CANDLES:
                 _candles[instrument] = _candles[instrument][-MAX_CANDLES:]
 
+            # Persist completed candle to database
+            try:
+                state = _cvd_state.get(instrument, {})
+                candle_ts_iso = datetime.fromtimestamp(candle["time"], tz=timezone.utc).isoformat()
+                ai_gate.save_bar(
+                    instrument=instrument,
+                    timestamp=candle_ts_iso,
+                    o=candle["open"], h=candle["high"],
+                    l=candle["low"], c=candle["close"],
+                    volume=state.get("volume", 0),
+                    cvd=state.get("cvd", 0),
+                    cvd_delta=candle.get("cvd_delta", 0),
+                )
+            except Exception as e:
+                logger.warning(f"CVD: failed to save bar to DB: {e}")
+
         # Start new candle
         _current_candle[instrument] = {
             "time": minute_ts,
@@ -345,6 +363,32 @@ async def _ws_loop(api_key: str, instruments: list[str]):
             await asyncio.sleep(5)
 
 
+def _load_historical_bars(instruments: list[str]):
+    """Load persisted bars from database to populate in-memory candle buffer."""
+    try:
+        for inst in instruments:
+            bars = ai_gate.get_bars(inst, MAX_CANDLES)
+            if bars:
+                _candles[inst] = []
+                for bar in bars:
+                    # Convert ISO timestamp to unix seconds
+                    try:
+                        ts = int(datetime.fromisoformat(bar["timestamp"]).timestamp())
+                    except (ValueError, TypeError):
+                        continue
+                    _candles[inst].append({
+                        "time": ts,
+                        "open": bar["open"],
+                        "high": bar["high"],
+                        "low": bar["low"],
+                        "close": bar["close"],
+                        "cvd_delta": bar.get("cvd_delta", 0),
+                    })
+                logger.info(f"CVD: loaded {len(_candles[inst])} historical bars for {inst}")
+    except Exception as e:
+        logger.warning(f"CVD: failed to load historical bars: {e}")
+
+
 def start(api_key: str, instruments: list[str]):
     """Start the CVD WebSocket client as a background task."""
     global _ws_task, _subscribed_instruments
@@ -358,6 +402,7 @@ def start(api_key: str, instruments: list[str]):
         return
 
     _subscribed_instruments = set(instruments)
+    _load_historical_bars(instruments)
     _ws_task = asyncio.create_task(_ws_loop(api_key, instruments))
     logger.info(f"CVD: started tracking {instruments}")
 

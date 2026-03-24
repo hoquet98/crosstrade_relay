@@ -471,7 +471,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
-    height: 200px;
+    height: 400px;
   "></div>
 
   <div class="config-bar">
@@ -921,11 +921,15 @@
   let cvdBarSeries = null;
   let chartInstrument = null;
 
+  function isoToUnix(iso) {
+    return Math.floor(new Date(iso).getTime() / 1000);
+  }
+
   function initChart() {
     const container = document.getElementById('cvdChartContainer');
     cvdChart = LightweightCharts.createChart(container, {
       width: container.clientWidth,
-      height: 200,
+      height: 400,
       layout: {
         background: { color: '#12131a' },
         textColor: '#7b7f9e',
@@ -969,11 +973,67 @@
       const inst = cvdData[0].instrument;
       if (!inst) return;
 
-      const resp = await fetch(`${BASE}/cvd/${encodeURIComponent(inst)}/candles`);
-      const candles = await resp.json();
-      if (!candles || candles.length === 0) return;
+      // Build URL with bot filter
+      const botFilter = getBotFilter();
+      let url = `${BASE}/cvd/${encodeURIComponent(inst)}/chart?limit=480`;
+      if (botFilter) url += `&relay_id=${encodeURIComponent(botFilter)}`;
 
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!data || !data.candles || data.candles.length === 0) return;
+
+      // Process candles — handle both DB format (ISO timestamp) and in-memory format (unix time)
+      const candles = data.candles.map(c => {
+        let t = c.time;
+        if (!t && c.timestamp) t = isoToUnix(c.timestamp);
+        if (typeof t === 'string') t = isoToUnix(t);
+        return { time: t, open: c.open, high: c.high, low: c.low, close: c.close };
+      });
       candleSeries.setData(candles);
+
+      // Process markers
+      if (data.markers && data.markers.length > 0) {
+        const chartMarkers = [];
+        for (const m of data.markers) {
+          let t = m.time;
+          if (typeof t === 'string') t = isoToUnix(t);
+          if (!t) continue;
+
+          const dir = (m.direction || 'long').toLowerCase();
+
+          if (m.type === 'reject') {
+            chartMarkers.push({
+              time: t,
+              position: dir === 'short' ? 'aboveBar' : 'belowBar',
+              color: '#ff9800',
+              shape: 'circle',
+              text: 'X',
+            });
+          } else if (m.type === 'entry') {
+            chartMarkers.push({
+              time: t,
+              position: dir === 'short' ? 'aboveBar' : 'belowBar',
+              color: dir === 'short' ? '#ff1744' : '#00e676',
+              shape: dir === 'short' ? 'arrowDown' : 'arrowUp',
+              text: dir === 'short' ? 'S' : 'L',
+            });
+          } else if (m.type === 'exit') {
+            const pnl = m.dollar_pnl || 0;
+            chartMarkers.push({
+              time: t,
+              position: dir === 'long' ? 'aboveBar' : 'belowBar',
+              color: pnl > 0 ? '#00e676' : '#ff1744',
+              shape: 'circle',
+              text: '$' + pnl.toFixed(0),
+            });
+          }
+        }
+        // Sort by time ascending (required by Lightweight Charts)
+        chartMarkers.sort((a, b) => a.time - b.time);
+        candleSeries.setMarkers(chartMarkers);
+      } else {
+        candleSeries.setMarkers([]);
+      }
     } catch (e) {}
   }
 

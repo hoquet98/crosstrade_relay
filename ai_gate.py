@@ -267,12 +267,77 @@ def init_db():
         )
     """)
 
+    # Persistent 1-min bar storage for charting
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_bars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            instrument TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL DEFAULT 0,
+            cvd REAL DEFAULT 0,
+            cvd_delta REAL DEFAULT 0,
+            UNIQUE(instrument, timestamp)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_bars_inst_ts ON ai_bars(instrument, timestamp)")
+
     conn.commit()
     conn.close()
     _migrated = True
 
     # Seed default indicators
     seed_precision_scalp_indicators()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PERSISTENT BAR STORAGE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def save_bar(instrument: str, timestamp: str, o: float, h: float, l: float, c: float,
+             volume: float = 0, cvd: float = 0, cvd_delta: float = 0):
+    """Save a completed 1-min bar to the database."""
+    init_db()
+    conn = db.get_connection()
+    conn.execute("""
+        INSERT INTO ai_bars (instrument, timestamp, open, high, low, close, volume, cvd, cvd_delta)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(instrument, timestamp) DO UPDATE SET
+            high = MAX(ai_bars.high, excluded.high),
+            low = MIN(ai_bars.low, excluded.low),
+            close = excluded.close,
+            volume = excluded.volume,
+            cvd = excluded.cvd,
+            cvd_delta = excluded.cvd_delta
+    """, (instrument, timestamp, o, h, l, c, volume, cvd, cvd_delta))
+    conn.commit()
+    conn.close()
+
+
+def get_bars(instrument: str, limit: int = 480) -> list[dict]:
+    """Get recent bars for an instrument, ordered by timestamp ascending."""
+    init_db()
+    conn = db.get_connection()
+    rows = conn.execute("""
+        SELECT * FROM ai_bars WHERE instrument = ?
+        ORDER BY timestamp DESC LIMIT ?
+    """, (instrument, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
+def purge_old_bars(days: int = 2):
+    """Delete bars older than N days."""
+    init_db()
+    conn = db.get_connection()
+    conn.execute("""
+        DELETE FROM ai_bars WHERE timestamp < datetime('now', ?)
+    """, (f'-{days} days',))
+    conn.commit()
+    conn.close()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1715,8 +1780,17 @@ async def stale_position_watchdog():
     Runs every 60 seconds. Catches orphaned positions from Pine crashes,
     chart closures, or network issues.
     """
+    _watchdog_iter = 0
     while True:
         await asyncio.sleep(60)
+        _watchdog_iter += 1
+        # Purge old bars every ~60 iterations (hourly)
+        if _watchdog_iter % 60 == 0:
+            try:
+                purge_old_bars(2)
+                logger.info("Purged old bars (>2 days)")
+            except Exception as e:
+                logger.error(f"Bar purge error: {e}")
         try:
             positions = list_positions()
             now = datetime.now(timezone.utc)

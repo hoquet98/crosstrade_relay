@@ -796,6 +796,84 @@ async def cvd_candles(instrument: str):
     return cvd.get_candles(instrument)
 
 
+@app.get("/cvd/{instrument}/chart")
+async def cvd_chart_data(instrument: str, relay_id: str = None, limit: int = 240):
+    """Get chart data with candles and trade markers for overlay."""
+    # Get candles from DB (persistent) with fallback to in-memory
+    bars = ai_gate.get_bars(instrument, limit)
+
+    # If no DB bars, fall back to in-memory candles
+    if not bars:
+        bars = cvd.get_candles(instrument)
+
+    # Get trade markers from decision logs
+    markers = []
+    inst_pattern = f'%{instrument.replace("1!", "").replace("!", "")}%'
+
+    conn = db.get_connection()
+
+    if relay_id:
+        # Filtered by relay_id
+        rejects = conn.execute("""
+            SELECT timestamp, signal FROM ai_gate_logs
+            WHERE instrument LIKE ? AND ai_decision = 'DISAGREE' AND alert_type = 'entry' AND relay_id = ?
+            ORDER BY timestamp DESC LIMIT ?
+        """, (inst_pattern, relay_id, limit)).fetchall()
+        for r in rejects:
+            markers.append({"time": r["timestamp"], "type": "reject",
+                            "direction": r["signal"].lower() if r["signal"] else "long"})
+
+        entries = conn.execute("""
+            SELECT timestamp, signal FROM ai_gate_logs
+            WHERE instrument LIKE ? AND ai_decision = 'AGREE' AND alert_type = 'entry' AND relay_id = ?
+            ORDER BY timestamp DESC LIMIT ?
+        """, (inst_pattern, relay_id, limit)).fetchall()
+        for e in entries:
+            markers.append({"time": e["timestamp"], "type": "entry",
+                            "direction": e["signal"].lower() if e["signal"] else "long"})
+
+        trades = conn.execute("""
+            SELECT closed_at, direction, dollar_pnl, ticks_pnl FROM ai_trades
+            WHERE instrument LIKE ? AND status = 'closed' AND closed_at IS NOT NULL AND relay_id = ?
+            ORDER BY closed_at DESC LIMIT ?
+        """, (inst_pattern, relay_id, limit)).fetchall()
+        for t in trades:
+            markers.append({"time": t["closed_at"], "type": "exit", "direction": t["direction"],
+                            "dollar_pnl": t["dollar_pnl"], "ticks_pnl": t["ticks_pnl"]})
+    else:
+        # All bots
+        rejects = conn.execute("""
+            SELECT timestamp, signal, ai_decision FROM ai_gate_logs
+            WHERE instrument LIKE ? AND ai_decision = 'DISAGREE' AND alert_type = 'entry'
+            ORDER BY timestamp DESC LIMIT ?
+        """, (inst_pattern, limit)).fetchall()
+        for r in rejects:
+            markers.append({"time": r["timestamp"], "type": "reject",
+                            "direction": r["signal"].lower() if r["signal"] else "long"})
+
+        entries = conn.execute("""
+            SELECT timestamp, signal, ai_decision FROM ai_gate_logs
+            WHERE instrument LIKE ? AND ai_decision = 'AGREE' AND alert_type = 'entry'
+            ORDER BY timestamp DESC LIMIT ?
+        """, (inst_pattern, limit)).fetchall()
+        for e in entries:
+            markers.append({"time": e["timestamp"], "type": "entry",
+                            "direction": e["signal"].lower() if e["signal"] else "long"})
+
+        trades = conn.execute("""
+            SELECT closed_at, direction, dollar_pnl, ticks_pnl FROM ai_trades
+            WHERE instrument LIKE ? AND status = 'closed' AND closed_at IS NOT NULL
+            ORDER BY closed_at DESC LIMIT ?
+        """, (inst_pattern, limit)).fetchall()
+        for t in trades:
+            markers.append({"time": t["closed_at"], "type": "exit", "direction": t["direction"],
+                            "dollar_pnl": t["dollar_pnl"], "ticks_pnl": t["ticks_pnl"]})
+
+    conn.close()
+
+    return {"candles": bars, "markers": markers}
+
+
 @app.post("/cvd/reset")
 async def cvd_reset(instrument: str = None):
     """Reset CVD to zero."""
