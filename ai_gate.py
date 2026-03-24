@@ -294,6 +294,24 @@ def init_db():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_bars_inst_ts ON ai_bars(instrument, timestamp)")
 
+    # Persistent 5-min bar storage for longer-term indicators
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_bars_5m (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            instrument TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume REAL DEFAULT 0,
+            cvd REAL DEFAULT 0,
+            cvd_delta REAL DEFAULT 0,
+            UNIQUE(instrument, timestamp)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_bars_5m_inst_ts ON ai_bars_5m(instrument, timestamp)")
+
     conn.commit()
     conn.close()
     _migrated = True
@@ -338,15 +356,109 @@ def get_bars(instrument: str, limit: int = 480) -> list[dict]:
     return [dict(r) for r in reversed(rows)]
 
 
-def purge_old_bars(days: int = 2):
-    """Delete bars older than N days."""
+def purge_old_bars(days_1m: int = 14, days_5m: int = 60):
+    """Delete old bars — 1-min after 14 days, 5-min after 60 days."""
     init_db()
     conn = db.get_connection()
     conn.execute("""
         DELETE FROM ai_bars WHERE timestamp < datetime('now', ?)
-    """, (f'-{days} days',))
+    """, (f'-{days_1m} days',))
+    conn.execute("""
+        DELETE FROM ai_bars_5m WHERE timestamp < datetime('now', ?)
+    """, (f'-{days_5m} days',))
     conn.commit()
     conn.close()
+
+
+def save_bar_5m(instrument: str, timestamp: str, o: float, h: float, l: float, c: float,
+                volume: float = 0, cvd: float = 0, cvd_delta: float = 0):
+    """Save a completed 5-min bar to the database."""
+    init_db()
+    conn = db.get_connection()
+    conn.execute("""
+        INSERT INTO ai_bars_5m (instrument, timestamp, open, high, low, close, volume, cvd, cvd_delta)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(instrument, timestamp) DO UPDATE SET
+            high = MAX(ai_bars_5m.high, excluded.high),
+            low = MIN(ai_bars_5m.low, excluded.low),
+            close = excluded.close,
+            volume = excluded.volume,
+            cvd = excluded.cvd,
+            cvd_delta = excluded.cvd_delta
+    """, (instrument, timestamp, o, h, l, c, volume, cvd, cvd_delta))
+    conn.commit()
+    conn.close()
+
+
+def get_bars_5m(instrument: str, limit: int = 480) -> list[dict]:
+    """Get recent 5-min bars for an instrument."""
+    init_db()
+    conn = db.get_connection()
+    rows = conn.execute("""
+        SELECT * FROM ai_bars_5m WHERE instrument = ?
+        ORDER BY timestamp DESC LIMIT ?
+    """, (instrument, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
+def aggregate_5m_bar(instrument: str):
+    """Aggregate the last 5 completed 1-min bars into a 5-min bar.
+
+    Called every time a 1-min bar completes. Only writes a 5-min bar
+    when the minute is on a 5-min boundary (xx:00, xx:05, xx:10, etc).
+    """
+    init_db()
+    conn = db.get_connection()
+
+    # Get the latest 1-min bar timestamp
+    latest = conn.execute("""
+        SELECT timestamp FROM ai_bars WHERE instrument = ?
+        ORDER BY timestamp DESC LIMIT 1
+    """, (instrument,)).fetchone()
+
+    if not latest:
+        conn.close()
+        return
+
+    from datetime import datetime as dt
+    ts_str = latest["timestamp"]
+    try:
+        ts = dt.fromisoformat(ts_str.replace("+00:00", "").replace("Z", ""))
+    except:
+        conn.close()
+        return
+
+    # Only aggregate on 5-min boundaries
+    if ts.minute % 5 != 4:  # minute 4, 9, 14, 19, etc = end of 5-min period
+        conn.close()
+        return
+
+    # Get the 5 most recent 1-min bars for this instrument
+    rows = conn.execute("""
+        SELECT * FROM ai_bars WHERE instrument = ?
+        ORDER BY timestamp DESC LIMIT 5
+    """, (instrument,)).fetchall()
+
+    if len(rows) < 5:
+        conn.close()
+        return
+
+    bars = [dict(r) for r in reversed(rows)]
+
+    # Aggregate OHLCV
+    bar_5m_ts = bars[0]["timestamp"]  # start of the 5-min period
+    o = bars[0]["open"]
+    h = max(b["high"] for b in bars)
+    l = min(b["low"] for b in bars)
+    c = bars[-1]["close"]
+    vol = bars[-1].get("volume", 0)  # cumulative volume from last bar
+    cvd = bars[-1].get("cvd", 0)
+    cvd_delta = sum(b.get("cvd_delta", 0) for b in bars)
+
+    conn.close()
+
+    save_bar_5m(instrument, bar_5m_ts, o, h, l, c, vol, cvd, cvd_delta)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1805,8 +1917,8 @@ async def stale_position_watchdog():
         # Purge old bars every ~60 iterations (hourly)
         if _watchdog_iter % 60 == 0:
             try:
-                purge_old_bars(2)
-                logger.info("Purged old bars (>2 days)")
+                purge_old_bars(14, 60)
+                logger.info("Purged old bars (1m >14d, 5m >60d)")
             except Exception as e:
                 logger.error(f"Bar purge error: {e}")
         try:

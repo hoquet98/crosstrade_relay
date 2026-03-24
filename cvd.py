@@ -290,6 +290,12 @@ def _update_candle(instrument: str, price: float, cvd_delta: int):
             except Exception as e:
                 logger.warning(f"CVD: failed to save bar to DB: {e}")
 
+            # Aggregate into 5-min bars
+            try:
+                ai_gate.aggregate_5m_bar(instrument)
+            except Exception as e:
+                logger.warning(f"CVD: 5m aggregation error: {e}")
+
             # Trigger Python strategy bots on bar close
             try:
                 import strategy_runner
