@@ -698,6 +698,46 @@ async def ai_bots_create(request: Request, _user: dict = Depends(verify_bearer))
     return {"status": "ok", "bot_id": data["bot_id"]}
 
 
+# ── Strategy Indicator endpoints ──
+
+@app.get("/webhook/ai/strategies/{strategy_id}/indicators")
+async def ai_strategy_indicators_get(strategy_id: str):
+    """Get available indicators for a strategy."""
+    return ai_gate.get_strategy_indicators(strategy_id)
+
+
+@app.post("/webhook/ai/strategies/{strategy_id}/indicators")
+async def ai_strategy_indicators_set(strategy_id: str, request: Request,
+                                      _user: dict = Depends(verify_bearer)):
+    """Bulk set indicators for a strategy."""
+    data = await request.json()
+    indicators = data.get("indicators", [])
+    if not indicators:
+        raise HTTPException(status_code=400, detail="Missing 'indicators' list")
+    ai_gate.add_strategy_indicators(strategy_id, indicators)
+    return {"status": "ok", "strategy_id": strategy_id, "count": len(indicators)}
+
+
+# ── Bot Indicator endpoints ──
+
+@app.get("/webhook/ai/bots/{bot_id}/indicators")
+async def ai_bot_indicators_get(bot_id: str):
+    """Get bot's indicator selections."""
+    return ai_gate.get_bot_indicators(bot_id)
+
+
+@app.post("/webhook/ai/bots/{bot_id}/indicators")
+async def ai_bot_indicators_set(bot_id: str, request: Request,
+                                 _user: dict = Depends(verify_bearer)):
+    """Set bot's indicator selections."""
+    data = await request.json()
+    indicators = data.get("indicators", {})
+    if not isinstance(indicators, dict):
+        raise HTTPException(status_code=400, detail="'indicators' must be a dict of field_name -> bool")
+    ai_gate.set_bot_indicators(bot_id, indicators)
+    return {"status": "ok", "bot_id": bot_id, "count": len(indicators)}
+
+
 @app.put("/webhook/ai/bots/{bot_id}/enable")
 async def ai_bot_enable(bot_id: str, _user: dict = Depends(verify_bearer)):
     ai_gate.set_bot_enabled(bot_id, True)

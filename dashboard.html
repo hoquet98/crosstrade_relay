@@ -270,6 +270,111 @@
     .log-table { overflow-x: auto; }
     .log-table table { min-width: 800px; }
   }
+
+  /* ── Bot Wizard Modal ── */
+  .wizard-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.75); z-index: 200; align-items: center; justify-content: center; }
+  .wizard-overlay.active { display: flex; }
+  .wizard-modal {
+    background: var(--bg-card); border: 1px solid var(--border-accent); border-radius: 14px;
+    max-width: 780px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .wizard-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 24px; border-bottom: 1px solid var(--border);
+  }
+  .wizard-header h3 { font-size: 16px; font-weight: 600; }
+  .wizard-steps {
+    display: flex; gap: 8px; padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.01);
+  }
+  .wizard-step {
+    display: flex; align-items: center; gap: 6px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text-dim); padding: 5px 12px; border-radius: 20px;
+    border: 1px solid var(--border); transition: all 0.2s;
+  }
+  .wizard-step.active { color: var(--text-primary); border-color: var(--accent); background: var(--accent-glow); }
+  .wizard-step.done { color: var(--agree); border-color: var(--agree-border); }
+  .wizard-step-num {
+    width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 10px; font-weight: 700;
+    background: var(--border); color: var(--text-dim);
+  }
+  .wizard-step.active .wizard-step-num { background: var(--accent); color: #fff; }
+  .wizard-step.done .wizard-step-num { background: var(--agree); color: #000; }
+  .wizard-body { padding: 24px; overflow-y: auto; flex: 1; }
+  .wizard-footer {
+    display: flex; justify-content: space-between; padding: 16px 24px;
+    border-top: 1px solid var(--border);
+  }
+  .wiz-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500;
+    padding: 8px 20px; border-radius: 8px; cursor: pointer; transition: all 0.2s; border: 1px solid var(--border);
+  }
+  .wiz-btn-secondary { background: transparent; color: var(--text-secondary); }
+  .wiz-btn-secondary:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+  .wiz-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .wiz-btn-primary:hover { filter: brightness(1.15); }
+  .wiz-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .wiz-field { margin-bottom: 16px; }
+  .wiz-field label {
+    display: block; font-size: 11px; font-weight: 500; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-dim); margin-bottom: 6px;
+  }
+  .wiz-field input, .wiz-field select, .wiz-field textarea {
+    width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-primary); padding: 8px 12px; outline: none; transition: border-color 0.2s;
+  }
+  .wiz-field input:focus, .wiz-field select:focus, .wiz-field textarea:focus { border-color: var(--accent); }
+  .wiz-field textarea { min-height: 200px; resize: vertical; line-height: 1.5; }
+  .wiz-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  .indicator-group { margin-bottom: 16px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .indicator-group-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px; background: rgba(255,255,255,0.02); cursor: pointer;
+    border-bottom: 1px solid var(--border); user-select: none; transition: background 0.15s;
+  }
+  .indicator-group-header:hover { background: var(--bg-card-hover); }
+  .indicator-group-title {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-secondary);
+  }
+  .indicator-group-count { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim); }
+  .indicator-group-actions { display: flex; gap: 6px; }
+  .indicator-group-actions button {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 2px 8px;
+    border-radius: 4px; border: 1px solid var(--border); background: transparent;
+    color: var(--text-dim); cursor: pointer; transition: all 0.15s;
+  }
+  .indicator-group-actions button:hover { color: var(--text-secondary); border-color: var(--border-accent); }
+  .indicator-group-body { display: none; padding: 8px 0; }
+  .indicator-group.open .indicator-group-body { display: block; }
+  .indicator-row {
+    display: flex; align-items: center; gap: 12px; padding: 6px 16px; transition: background 0.1s;
+  }
+  .indicator-row:hover { background: rgba(255,255,255,0.02); }
+  .indicator-toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+  .indicator-toggle input { opacity: 0; width: 0; height: 0; }
+  .indicator-toggle .slider {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--border); border-radius: 10px; cursor: pointer; transition: background 0.2s;
+  }
+  .indicator-toggle .slider::before {
+    content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+    left: 2px; bottom: 2px; background: var(--text-dim); transition: all 0.2s;
+  }
+  .indicator-toggle input:checked + .slider { background: var(--accent); }
+  .indicator-toggle input:checked + .slider::before { transform: translateX(16px); background: #fff; }
+  .indicator-name { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-primary); min-width: 160px; }
+  .indicator-desc { font-size: 11px; color: var(--text-dim); }
+
+  .prompt-ref { margin-top: 12px; padding: 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; }
+  .prompt-ref-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 8px; }
+  .prompt-ref-list { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-secondary); line-height: 1.6; columns: 2; }
 </style>
 </head>
 <body>
@@ -371,6 +476,7 @@
     <select id="filterBot">
       <option value="">All Bots</option>
     </select>
+    <button class="refresh-btn" id="addBotBtn" onclick="openWizard()" style="margin-left:8px; background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600;">+ Add Bot</button>
     <label style="margin-left:16px">Filter</label>
     <select id="filterDecision">
       <option value="">All Decisions</option>
@@ -446,6 +552,27 @@
       <button class="modal-close" onclick="document.getElementById('modalOverlay').classList.remove('active')">&times;</button>
     </div>
     <div class="modal-body"><pre id="modalContent"></pre></div>
+  </div>
+</div>
+
+<!-- Bot Wizard Modal -->
+<div class="wizard-overlay" id="wizardOverlay" onclick="if(event.target===this)closeWizard()">
+  <div class="wizard-modal">
+    <div class="wizard-header">
+      <h3>Create New Bot</h3>
+      <button class="modal-close" onclick="closeWizard()">&times;</button>
+    </div>
+    <div class="wizard-steps">
+      <div class="wizard-step active" data-step="1"><div class="wizard-step-num">1</div> Config</div>
+      <div class="wizard-step" data-step="2"><div class="wizard-step-num">2</div> Indicators</div>
+      <div class="wizard-step" data-step="3"><div class="wizard-step-num">3</div> Entry Prompt</div>
+      <div class="wizard-step" data-step="4"><div class="wizard-step-num">4</div> Exit Prompt</div>
+    </div>
+    <div class="wizard-body" id="wizardBody"></div>
+    <div class="wizard-footer">
+      <button class="wiz-btn wiz-btn-secondary" id="wizBack" onclick="wizardBack()">Back</button>
+      <button class="wiz-btn wiz-btn-primary" id="wizNext" onclick="wizardNext()">Next</button>
+    </div>
   </div>
 </div>
 
@@ -837,6 +964,403 @@
   initChart();
   fetchCandles();
   setInterval(fetchCandles, 2000);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BOT WIZARD
+  // ══════════════════════════════════════════════════════════════════════════
+
+  let wizStep = 1;
+  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', indicators: {}, entry_prompt: '', manage_prompt: '' };
+  let wizIndicators = []; // fetched from API
+
+  const DEFAULT_ENTRY_PROMPT = `You are a trade conviction filter for algorithmic futures trading. You receive a JSON payload of technical indicator values computed at the moment a trading strategy fires a signal. Your job is to decide whether the signal has enough edge to execute.
+
+You are NOT predicting whether price will go up or down. You are evaluating whether the CURRENT INDICATOR CONTEXT supports this specific signal direction and trade profile.
+
+## Decision Framework
+
+AGREE when:
+- The majority of indicators align with the signal direction
+- Momentum, trend, and volatility context support the trade thesis
+- The risk/reward profile is reasonable given current conditions
+- Session timing and market structure don't present obvious headwinds
+
+DISAGREE when:
+- Key indicators contradict the signal direction (e.g., LONG signal but HTF bearish, RSI overbought, price at session highs)
+- Volatility is extreme and working against the trade (e.g., ATR already overextended for a mean-reversion scalp)
+- Session timing is unfavorable (midday chop for momentum trades, close for new positions)
+- Candle structure on the signal bar is adverse (e.g., LONG but strong upper wick rejection)
+- Consolidation is too tight (no volatility to capture) or too wide (no clear direction)
+
+## Strategy Type Calibration
+- **scalp**: Be more permissive on trend alignment. Mean-reversion against short-term extremes is valid. Focus on volatility, overextension, and candle structure.
+- **swing**: Require trend alignment. HTF bias must match signal direction. Reject counter-trend entries unless divergence is strong.
+- **trend**: Require strong trend alignment across all timeframes. Only agree when momentum, trend, and structure are all aligned.
+
+## Response Format
+Respond with EXACTLY this format — no extra text, no markdown:
+
+DECISION: AGREE
+REASON: [one concise sentence explaining why]
+
+or
+
+DECISION: DISAGREE
+REASON: [one concise sentence explaining why]`;
+
+  const DEFAULT_MANAGE_PROMPT = `You are a trade exit manager for algorithmic futures trading. You receive a JSON payload with the current indicator state, position P&L, and a server-computed exit_score.
+
+Safety nets (hard stop, time stop) have already been checked — if you are being asked, the position is NOT in immediate danger. Your job is to evaluate whether the trade thesis is intact or deteriorating.
+
+## Exit Score (server-computed)
+The exit_score reflects how many indicators have flipped against the position:
+| Condition                              | Points |
+|----------------------------------------|--------|
+| ZLEMA trend flipped against position   | +3     |
+| UT Bot trail flipped against position  | +3     |
+| ZLEMA went neutral                     | +2     |
+| Stoch RSI crossed against position     | +2     |
+| Squeeze momentum flipped against       | +2     |
+| Exit warning fired (WT extreme)        | +2     |
+| Stoch RSI hit extreme zone             | +1     |
+
+## Profit-Tiered Exit Thresholds
+The bigger the profit, the less adversity you tolerate:
+
+| Unrealized Profit        | Exit Score Needed |
+|--------------------------|-------------------|
+| Under 10 ticks           | Don't exit — too small to take |
+| 10-20 ticks              | Score >= 5        |
+| 20-50 ticks              | Score >= 4        |
+| 50-100 ticks             | Score >= 3        |
+| 100-150 ticks            | Score >= 2        |
+| 150+ ticks               | Score >= 1 (hair trigger) |
+
+## Your Decision
+Use the exit_score AND the indicator context together. You can override:
+- HOLD even with a high score if indicators show the adverse move is exhausting
+- EXIT even with a low score if you see a clear structural breakdown
+
+## Response Format
+Respond with EXACTLY this format — no extra text, no markdown:
+
+DECISION: EXIT
+REASON: [one concise sentence]
+
+or
+
+DECISION: HOLD
+REASON: [one concise sentence]`;
+
+  function openWizard() {
+    wizStep = 1;
+    wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', indicators: {}, entry_prompt: DEFAULT_ENTRY_PROMPT, manage_prompt: DEFAULT_MANAGE_PROMPT };
+    wizIndicators = [];
+    el('wizardOverlay').classList.add('active');
+    renderWizardStep();
+  }
+
+  function closeWizard() {
+    el('wizardOverlay').classList.remove('active');
+  }
+
+  function renderWizardStep() {
+    // Update step indicators
+    document.querySelectorAll('.wizard-step').forEach(s => {
+      const n = parseInt(s.dataset.step);
+      s.classList.remove('active', 'done');
+      if (n === wizStep) s.classList.add('active');
+      else if (n < wizStep) s.classList.add('done');
+    });
+
+    const backBtn = el('wizBack');
+    const nextBtn = el('wizNext');
+    backBtn.style.visibility = wizStep === 1 ? 'hidden' : 'visible';
+    nextBtn.textContent = wizStep === 4 ? 'Create Bot' : 'Next';
+
+    const body = el('wizardBody');
+
+    if (wizStep === 1) {
+      renderStep1(body);
+    } else if (wizStep === 2) {
+      renderStep2(body);
+    } else if (wizStep === 3) {
+      renderStep3(body);
+    } else if (wizStep === 4) {
+      renderStep4(body);
+    }
+  }
+
+  function renderStep1(body) {
+    // Collect known relay_ids from bot list
+    const botSel = el('filterBot');
+    const existingBots = [];
+    for (const opt of botSel.options) {
+      if (opt.value) existingBots.push(opt.value);
+    }
+    const sourceOpts = existingBots.map(b => `<option value="${b}" ${wizData.source_bot === b ? 'selected' : ''}>${b}</option>`).join('');
+
+    body.innerHTML = `
+      <div class="wiz-row">
+        <div class="wiz-field">
+          <label>Bot ID</label>
+          <input type="text" id="wizBotId" value="${wizData.bot_id}" placeholder="e.g. snipe_sim1">
+        </div>
+        <div class="wiz-field">
+          <label>Mode</label>
+          <select id="wizMode">
+            <option value="normal" ${wizData.mode === 'normal' ? 'selected' : ''}>Normal</option>
+            <option value="copy" ${wizData.mode === 'copy' ? 'selected' : ''}>Copy</option>
+          </select>
+        </div>
+      </div>
+      <div class="wiz-field" id="wizSourceField" style="display:${wizData.mode === 'copy' ? 'block' : 'none'}">
+        <label>Source Bot</label>
+        <select id="wizSourceBot">
+          <option value="">-- select source --</option>
+          ${sourceOpts}
+        </select>
+      </div>
+      <div class="wiz-row">
+        <div class="wiz-field">
+          <label>Account</label>
+          <input type="text" id="wizAccount" value="${wizData.account}" placeholder="e.g. Sim101">
+        </div>
+        <div class="wiz-field">
+          <label>Strategy Tag</label>
+          <input type="text" id="wizStrategyTag" value="${wizData.strategy_tag}" placeholder="e.g. AIGate">
+        </div>
+      </div>
+    `;
+
+    el('wizMode').addEventListener('change', function() {
+      el('wizSourceField').style.display = this.value === 'copy' ? 'block' : 'none';
+    });
+  }
+
+  function saveStep1() {
+    wizData.bot_id = (el('wizBotId')?.value || '').trim();
+    wizData.mode = el('wizMode')?.value || 'normal';
+    wizData.source_bot = el('wizSourceBot')?.value || '';
+    wizData.account = (el('wizAccount')?.value || '').trim();
+    wizData.strategy_tag = (el('wizStrategyTag')?.value || 'AIGate').trim();
+  }
+
+  async function renderStep2(body) {
+    body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim);">Loading indicators...</div>';
+
+    if (wizIndicators.length === 0) {
+      try {
+        const resp = await fetch(`${BASE}/webhook/ai/strategies/PrecisionScalp/indicators`);
+        if (resp.ok) wizIndicators = await resp.json();
+      } catch (e) {}
+    }
+
+    // Initialize all indicators as enabled if no selections exist yet
+    if (Object.keys(wizData.indicators).length === 0) {
+      wizIndicators.forEach(ind => { wizData.indicators[ind.field_name] = true; });
+    }
+
+    // Group by category
+    const groups = {};
+    wizIndicators.forEach(ind => {
+      if (!groups[ind.category]) groups[ind.category] = [];
+      groups[ind.category].push(ind);
+    });
+
+    const categoryOrder = ['signal', 'layer', 'oscillator', 'trend', 'volatility', 'candle', 'session', 'cvd'];
+    const sortedCategories = categoryOrder.filter(c => groups[c]);
+
+    let html = '';
+    for (const cat of sortedCategories) {
+      const items = groups[cat];
+      const enabledCount = items.filter(i => wizData.indicators[i.field_name] !== false).length;
+      html += `
+        <div class="indicator-group open" data-cat="${cat}">
+          <div class="indicator-group-header" onclick="toggleIndicatorGroup(this)">
+            <span class="indicator-group-title">${cat}</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span class="indicator-group-count" id="count-${cat}">${enabledCount}/${items.length} selected</span>
+              <div class="indicator-group-actions">
+                <button onclick="event.stopPropagation();selectAllCategory('${cat}',true)">All</button>
+                <button onclick="event.stopPropagation();selectAllCategory('${cat}',false)">None</button>
+              </div>
+            </div>
+          </div>
+          <div class="indicator-group-body">
+            ${items.map(ind => `
+              <div class="indicator-row">
+                <label class="indicator-toggle">
+                  <input type="checkbox" data-field="${ind.field_name}" data-cat="${cat}"
+                    ${wizData.indicators[ind.field_name] !== false ? 'checked' : ''}
+                    onchange="wizToggleIndicator('${ind.field_name}','${cat}',this.checked)">
+                  <span class="slider"></span>
+                </label>
+                <span class="indicator-name">${ind.field_name}</span>
+                <span class="indicator-desc">${ind.description || ''}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+    body.innerHTML = html;
+  }
+
+  function toggleIndicatorGroup(header) {
+    header.parentElement.classList.toggle('open');
+  }
+
+  function wizToggleIndicator(fieldName, category, enabled) {
+    wizData.indicators[fieldName] = enabled;
+    updateCategoryCount(category);
+  }
+
+  function selectAllCategory(cat, enabled) {
+    document.querySelectorAll(`input[data-cat="${cat}"]`).forEach(cb => {
+      cb.checked = enabled;
+      wizData.indicators[cb.dataset.field] = enabled;
+    });
+    updateCategoryCount(cat);
+  }
+
+  function updateCategoryCount(cat) {
+    const all = document.querySelectorAll(`input[data-cat="${cat}"]`);
+    const checked = document.querySelectorAll(`input[data-cat="${cat}"]:checked`);
+    const countEl = document.getElementById(`count-${cat}`);
+    if (countEl) countEl.textContent = `${checked.length}/${all.length} selected`;
+  }
+
+  function getSelectedIndicatorSummary() {
+    const enabled = Object.entries(wizData.indicators).filter(([,v]) => v).map(([k]) => k);
+    return enabled.join(', ');
+  }
+
+  function renderPromptRef() {
+    const enabled = Object.entries(wizData.indicators).filter(([,v]) => v).map(([k]) => k);
+    if (enabled.length === 0) return '';
+    return `
+      <div class="prompt-ref">
+        <div class="prompt-ref-title">Selected Indicators (${enabled.length})</div>
+        <div class="prompt-ref-list">${enabled.join('<br>')}</div>
+      </div>
+    `;
+  }
+
+  function renderStep3(body) {
+    body.innerHTML = `
+      <div class="wiz-field">
+        <label>Entry Prompt (AI system prompt for entry decisions)</label>
+        <textarea id="wizEntryPrompt" style="min-height:280px">${wizData.entry_prompt}</textarea>
+      </div>
+      ${renderPromptRef()}
+    `;
+  }
+
+  function saveStep3() {
+    wizData.entry_prompt = el('wizEntryPrompt')?.value || DEFAULT_ENTRY_PROMPT;
+  }
+
+  function renderStep4(body) {
+    body.innerHTML = `
+      <div class="wiz-field">
+        <label>Manage/Exit Prompt (AI system prompt for position management)</label>
+        <textarea id="wizManagePrompt" style="min-height:280px">${wizData.manage_prompt}</textarea>
+      </div>
+      ${renderPromptRef()}
+    `;
+  }
+
+  function saveStep4() {
+    wizData.manage_prompt = el('wizManagePrompt')?.value || DEFAULT_MANAGE_PROMPT;
+  }
+
+  function wizardBack() {
+    if (wizStep <= 1) return;
+    if (wizStep === 3) saveStep3();
+    if (wizStep === 4) saveStep4();
+    wizStep--;
+    renderWizardStep();
+  }
+
+  async function wizardNext() {
+    if (wizStep === 1) {
+      saveStep1();
+      if (!wizData.bot_id) { alert('Bot ID is required'); return; }
+      if (!wizData.account) { alert('Account is required'); return; }
+      if (wizData.mode === 'copy' && !wizData.source_bot) { alert('Source Bot is required for copy mode'); return; }
+      wizStep = 2;
+      renderWizardStep();
+    } else if (wizStep === 2) {
+      wizStep = 3;
+      renderWizardStep();
+    } else if (wizStep === 3) {
+      saveStep3();
+      wizStep = 4;
+      renderWizardStep();
+    } else if (wizStep === 4) {
+      saveStep4();
+      await createBot();
+    }
+  }
+
+  async function createBot() {
+    const nextBtn = el('wizNext');
+    nextBtn.disabled = true;
+    nextBtn.textContent = 'Creating...';
+
+    try {
+      // Get API key from prompt (cached in sessionStorage)
+      let apiKey = sessionStorage.getItem('ct_api_key');
+      if (!apiKey) {
+        apiKey = prompt('Enter your API key (Bearer token):');
+        if (!apiKey) { nextBtn.disabled = false; nextBtn.textContent = 'Create Bot'; return; }
+        sessionStorage.setItem('ct_api_key', apiKey);
+      }
+
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+
+      // 1. Create bot
+      const botBody = {
+        bot_id: wizData.bot_id,
+        mode: wizData.mode,
+        account: wizData.account,
+        strategy_tag: wizData.strategy_tag,
+        source_bot: wizData.mode === 'copy' ? wizData.source_bot : undefined,
+        entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : undefined,
+        manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : undefined,
+      };
+      const botResp = await fetch(`${BASE}/webhook/ai/bots`, { method: 'POST', headers, body: JSON.stringify(botBody) });
+      if (!botResp.ok) {
+        const err = await botResp.json().catch(() => ({}));
+        throw new Error(err.detail || `Bot create failed: ${botResp.status}`);
+      }
+
+      // 2. Set indicator selections
+      const indResp = await fetch(`${BASE}/webhook/ai/bots/${encodeURIComponent(wizData.bot_id)}/indicators`, {
+        method: 'POST', headers, body: JSON.stringify({ indicators: wizData.indicators })
+      });
+      if (!indResp.ok) {
+        const err = await indResp.json().catch(() => ({}));
+        throw new Error(err.detail || `Indicator save failed: ${indResp.status}`);
+      }
+
+      // 3. Refresh and close
+      await fetchBots();
+      el('filterBot').value = wizData.bot_id;
+      closeWizard();
+      fetchAll();
+    } catch (e) {
+      alert('Error: ' + e.message);
+      // Clear cached key if auth failed
+      if (e.message.includes('401') || e.message.includes('Invalid')) {
+        sessionStorage.removeItem('ct_api_key');
+      }
+    } finally {
+      nextBtn.disabled = false;
+      nextBtn.textContent = 'Create Bot';
+    }
+  }
 </script>
 </body>
 </html>

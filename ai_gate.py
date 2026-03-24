@@ -119,6 +119,15 @@ ROUTING_KEYS = {"relay_user", "relay_id", "account", "qty",
                 "order_type", "tif", "out_of_sync", "sync_strategy",
                 "strategy_tag"}
 
+# Fields that should ALWAYS be included regardless of indicator selection
+ALWAYS_INCLUDE_FIELDS = {
+    "relay_user", "relay_id", "account", "instrument", "strategy",
+    "strategy_type", "timeframe", "qty", "strategy_tag",
+    "target_ticks", "stop_ticks", "hard_stop_ticks", "rr", "tick_value",
+    "long_signal", "short_signal",  # signals always needed for state machine
+    "close", "price", "open", "high", "low", "volume",  # OHLCV always needed
+}
+
 # Required fields from Pine v2.0.0
 REQUIRED_BAR_FIELDS = {"relay_user", "relay_id", "account", "instrument"}
 
@@ -235,9 +244,223 @@ def init_db():
         )
     """)
 
+    # Strategy indicator registry
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_strategy_indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_id TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            field_type TEXT NOT NULL DEFAULT 'number',
+            category TEXT NOT NULL,
+            description TEXT,
+            UNIQUE(strategy_id, field_name)
+        )
+    """)
+
+    # Bot indicator selections
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_bot_indicators (
+            bot_id TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY(bot_id, field_name)
+        )
+    """)
+
     conn.commit()
     conn.close()
     _migrated = True
+
+    # Seed default indicators
+    seed_precision_scalp_indicators()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STRATEGY INDICATOR OPERATIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def add_strategy_indicators(strategy_id: str, indicators: list[dict]):
+    """Bulk insert indicators for a strategy."""
+    init_db()
+    conn = db.get_connection()
+    for ind in indicators:
+        conn.execute("""
+            INSERT INTO ai_strategy_indicators
+                (strategy_id, field_name, field_type, category, description)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(strategy_id, field_name) DO UPDATE SET
+                field_type = excluded.field_type,
+                category = excluded.category,
+                description = excluded.description
+        """, (strategy_id, ind["field_name"], ind.get("field_type", "number"),
+              ind["category"], ind.get("description", "")))
+    conn.commit()
+    conn.close()
+
+
+def get_strategy_indicators(strategy_id: str) -> list[dict]:
+    """Get all indicators for a strategy, grouped by category."""
+    init_db()
+    conn = db.get_connection()
+    rows = conn.execute(
+        "SELECT * FROM ai_strategy_indicators WHERE strategy_id = ? ORDER BY category, field_name",
+        (strategy_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_bot_indicators(bot_id: str, indicators: dict[str, bool]):
+    """Set which indicators a bot uses (dict of field_name -> enabled)."""
+    init_db()
+    conn = db.get_connection()
+    for field_name, enabled in indicators.items():
+        conn.execute("""
+            INSERT INTO ai_bot_indicators (bot_id, field_name, enabled)
+            VALUES (?, ?, ?)
+            ON CONFLICT(bot_id, field_name) DO UPDATE SET enabled = excluded.enabled
+        """, (bot_id, field_name, 1 if enabled else 0))
+    conn.commit()
+    conn.close()
+
+
+def get_bot_indicators(bot_id: str) -> dict[str, bool]:
+    """Get enabled/disabled state for a bot's indicators."""
+    init_db()
+    conn = db.get_connection()
+    rows = conn.execute(
+        "SELECT field_name, enabled FROM ai_bot_indicators WHERE bot_id = ?",
+        (bot_id,)
+    ).fetchall()
+    conn.close()
+    return {r["field_name"]: bool(r["enabled"]) for r in rows}
+
+
+def get_bot_enabled_fields(bot_id: str) -> set[str]:
+    """Get just the field names that are enabled (used for payload filtering)."""
+    init_db()
+    conn = db.get_connection()
+    rows = conn.execute(
+        "SELECT field_name FROM ai_bot_indicators WHERE bot_id = ? AND enabled = 1",
+        (bot_id,)
+    ).fetchall()
+    conn.close()
+    return {r["field_name"] for r in rows}
+
+
+def _filter_payload_for_bot(payload: dict, bot_id: str) -> dict:
+    """Filter payload to only include indicators the bot has enabled.
+    Always keeps ALWAYS_INCLUDE_FIELDS. If no indicator config exists, returns all fields.
+    """
+    bot_indicators = get_bot_indicators(bot_id)
+    if not bot_indicators:
+        # No indicator config — backwards compatible, send everything
+        return payload
+
+    enabled_fields = {f for f, en in bot_indicators.items() if en}
+    filtered = {}
+    for k, v in payload.items():
+        if k in ALWAYS_INCLUDE_FIELDS or k in enabled_fields:
+            filtered[k] = v
+    return filtered
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SEED: PrecisionScalp INDICATORS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def seed_precision_scalp_indicators():
+    """Register all PrecisionScalp indicators. Only inserts if not already present."""
+    conn = db.get_connection()
+    existing = conn.execute(
+        "SELECT COUNT(*) as cnt FROM ai_strategy_indicators WHERE strategy_id = 'PrecisionScalp'"
+    ).fetchone()
+    conn.close()
+    if existing and existing["cnt"] > 0:
+        return
+
+    indicators = [
+        # signal
+        {"field_name": "bull_confluence", "field_type": "number", "category": "signal", "description": "Bull filter count (0-4)"},
+        {"field_name": "bear_confluence", "field_type": "number", "category": "signal", "description": "Bear filter count (0-4)"},
+        {"field_name": "long_exit_warn", "field_type": "boolean", "category": "signal", "description": "WaveTrend overbought warning"},
+        {"field_name": "short_exit_warn", "field_type": "boolean", "category": "signal", "description": "WaveTrend oversold warning"},
+        # layer
+        {"field_name": "f_zlema_trend_bull", "field_type": "boolean", "category": "layer", "description": "ZLEMA micro-trend bullish"},
+        {"field_name": "f_zlema_trend_bear", "field_type": "boolean", "category": "layer", "description": "ZLEMA micro-trend bearish"},
+        {"field_name": "f_wt_mom_bull", "field_type": "boolean", "category": "layer", "description": "WaveTrend + momentum bullish"},
+        {"field_name": "f_wt_mom_bear", "field_type": "boolean", "category": "layer", "description": "WaveTrend + momentum bearish"},
+        {"field_name": "f_squeeze_off", "field_type": "boolean", "category": "layer", "description": "Squeeze momentum released"},
+        {"field_name": "f_trending", "field_type": "boolean", "category": "layer", "description": "Efficiency ratio above threshold"},
+        # oscillator
+        {"field_name": "rsi14", "field_type": "number", "category": "oscillator", "description": "RSI 14-period"},
+        {"field_name": "cci20", "field_type": "number", "category": "oscillator", "description": "CCI 20-period"},
+        {"field_name": "stoch_rsi_k", "field_type": "number", "category": "oscillator", "description": "Stoch RSI K value"},
+        {"field_name": "stoch_rsi_d", "field_type": "number", "category": "oscillator", "description": "Stoch RSI D value"},
+        {"field_name": "stoch_in_ob", "field_type": "boolean", "category": "oscillator", "description": "Stoch RSI overbought"},
+        {"field_name": "stoch_in_os", "field_type": "boolean", "category": "oscillator", "description": "Stoch RSI oversold"},
+        {"field_name": "stoch_bull_cross", "field_type": "boolean", "category": "oscillator", "description": "Stoch RSI bullish crossover"},
+        {"field_name": "stoch_bear_cross", "field_type": "boolean", "category": "oscillator", "description": "Stoch RSI bearish crossover"},
+        {"field_name": "rsi_bull_div", "field_type": "boolean", "category": "oscillator", "description": "RSI bullish divergence"},
+        {"field_name": "rsi_bear_div", "field_type": "boolean", "category": "oscillator", "description": "RSI bearish divergence"},
+        {"field_name": "wt1", "field_type": "number", "category": "oscillator", "description": "WaveTrend line 1"},
+        {"field_name": "wt2", "field_type": "number", "category": "oscillator", "description": "WaveTrend line 2"},
+        {"field_name": "wt_bull_cross", "field_type": "boolean", "category": "oscillator", "description": "WaveTrend bullish crossover"},
+        {"field_name": "wt_bear_cross", "field_type": "boolean", "category": "oscillator", "description": "WaveTrend bearish crossover"},
+        # trend
+        {"field_name": "zlema", "field_type": "number", "category": "trend", "description": "ZLEMA value"},
+        {"field_name": "zl_slope", "field_type": "number", "category": "trend", "description": "ZLEMA slope"},
+        {"field_name": "zlema_flipped_bull", "field_type": "boolean", "category": "trend", "description": "ZLEMA flipped bullish this bar"},
+        {"field_name": "zlema_flipped_bear", "field_type": "boolean", "category": "trend", "description": "ZLEMA flipped bearish this bar"},
+        {"field_name": "zlema_went_neutral", "field_type": "boolean", "category": "trend", "description": "ZLEMA went neutral this bar"},
+        {"field_name": "ut_trail", "field_type": "number", "category": "trend", "description": "UT Bot trail level"},
+        {"field_name": "ut_flipped_bull", "field_type": "boolean", "category": "trend", "description": "UT Bot flipped bullish"},
+        {"field_name": "ut_flipped_bear", "field_type": "boolean", "category": "trend", "description": "UT Bot flipped bearish"},
+        {"field_name": "ema20", "field_type": "number", "category": "trend", "description": "EMA 20"},
+        {"field_name": "ema50", "field_type": "number", "category": "trend", "description": "EMA 50"},
+        {"field_name": "ema20_slope5", "field_type": "number", "category": "trend", "description": "EMA 20 slope over 5 bars"},
+        {"field_name": "price_above_ema20", "field_type": "boolean", "category": "trend", "description": "Price above EMA 20"},
+        {"field_name": "price_above_ema50", "field_type": "boolean", "category": "trend", "description": "Price above EMA 50"},
+        {"field_name": "htf_bias", "field_type": "string", "category": "trend", "description": "Higher timeframe EMA bias"},
+        {"field_name": "sq_mom", "field_type": "number", "category": "trend", "description": "Squeeze momentum value"},
+        {"field_name": "squeeze_on", "field_type": "boolean", "category": "trend", "description": "Squeeze active (BB inside KC)"},
+        {"field_name": "mom_flipped_bull", "field_type": "boolean", "category": "trend", "description": "Momentum flipped bullish"},
+        {"field_name": "mom_flipped_bear", "field_type": "boolean", "category": "trend", "description": "Momentum flipped bearish"},
+        {"field_name": "er_val", "field_type": "number", "category": "trend", "description": "Efficiency ratio value"},
+        # volatility
+        {"field_name": "atr14", "field_type": "number", "category": "volatility", "description": "ATR 14-period"},
+        {"field_name": "atr_consumed_pct", "field_type": "number", "category": "volatility", "description": "ATR consumed percentage"},
+        {"field_name": "bb_pctb", "field_type": "number", "category": "volatility", "description": "Bollinger Band %B"},
+        {"field_name": "bar_range_vs_atr", "field_type": "number", "category": "volatility", "description": "Bar range vs ATR ratio"},
+        {"field_name": "vol_ratio", "field_type": "number", "category": "volatility", "description": "Volume ratio vs 20-bar avg"},
+        # candle
+        {"field_name": "bar_body_pct", "field_type": "number", "category": "candle", "description": "Bar body as % of range"},
+        {"field_name": "bar_upper_wick_pct", "field_type": "number", "category": "candle", "description": "Upper wick as % of range"},
+        {"field_name": "bar_lower_wick_pct", "field_type": "number", "category": "candle", "description": "Lower wick as % of range"},
+        {"field_name": "bar_is_bullish", "field_type": "boolean", "category": "candle", "description": "Bar closed bullish"},
+        {"field_name": "prev_3_pattern", "field_type": "string", "category": "candle", "description": "Last 3 bars pattern (H/L)"},
+        # session
+        {"field_name": "vwap_dist_ticks", "field_type": "number", "category": "session", "description": "Distance from VWAP in ticks"},
+        {"field_name": "dist_sess_high_ticks", "field_type": "number", "category": "session", "description": "Distance from session high"},
+        {"field_name": "dist_sess_low_ticks", "field_type": "number", "category": "session", "description": "Distance from session low"},
+        {"field_name": "bars_since_swing_high", "field_type": "number", "category": "session", "description": "Bars since last swing high"},
+        {"field_name": "bars_since_swing_low", "field_type": "number", "category": "session", "description": "Bars since last swing low"},
+        {"field_name": "cons_range_ticks", "field_type": "number", "category": "session", "description": "Consolidation range in ticks"},
+        {"field_name": "cons_range_vs_atr", "field_type": "number", "category": "session", "description": "Consolidation range vs ATR"},
+        {"field_name": "session_bucket", "field_type": "string", "category": "session", "description": "Session time bucket"},
+        {"field_name": "day_of_week", "field_type": "string", "category": "session", "description": "Day of week"},
+        {"field_name": "mins_to_maintenance", "field_type": "number", "category": "session", "description": "Minutes until CME maintenance"},
+        {"field_name": "last_5_closes", "field_type": "array", "category": "session", "description": "Last 5 bar close prices"},
+        # cvd
+        {"field_name": "cvd", "field_type": "number", "category": "cvd", "description": "Cumulative volume delta"},
+        {"field_name": "cvd_1m_delta", "field_type": "number", "category": "cvd", "description": "CVD change last 1 minute"},
+        {"field_name": "cvd_3m_delta", "field_type": "number", "category": "cvd", "description": "CVD change last 3 minutes"},
+        {"field_name": "cvd_5m_delta", "field_type": "number", "category": "cvd", "description": "CVD change last 5 minutes"},
+        {"field_name": "cvd_trend", "field_type": "string", "category": "cvd", "description": "CVD trend direction"},
+        {"field_name": "cvd_divergence", "field_type": "string", "category": "cvd", "description": "CVD vs price divergence"},
+    ]
+    add_strategy_indicators("PrecisionScalp", indicators)
+    logger.info("Seeded PrecisionScalp indicators (%d)", len(indicators))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1193,19 +1416,22 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
     async with _get_lock(lock_key):
         position = _get_position(relay_user, account, instrument)
 
+        # Filter payload to only include bot's enabled indicators
+        filtered_payload = _filter_payload_for_bot(payload, relay_id)
+
         if position is None:
             # === FLAT — check for entry signals ===
-            long_sig = payload.get("long_signal", False)
-            short_sig = payload.get("short_signal", False)
+            long_sig = filtered_payload.get("long_signal", False)
+            short_sig = filtered_payload.get("short_signal", False)
 
             if long_sig or short_sig:
                 direction = "long" if long_sig else "short"
-                await _handle_entry(payload, body_text, direction,
+                await _handle_entry(filtered_payload, body_text, direction,
                                     entry_prompt=entry_prompt)
             # else: flat, no signal — nothing to do
         else:
             # === IN POSITION — manage ===
-            await _handle_manage(payload, body_text, position,
+            await _handle_manage(filtered_payload, body_text, position,
                                  manage_prompt=manage_prompt)
 
 
