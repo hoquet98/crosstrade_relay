@@ -244,6 +244,15 @@ def init_db():
         )
     """)
 
+    # Add strategy_name and config_json columns if missing
+    bot_cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_bots)").fetchall()]
+    if "strategy_name" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN strategy_name TEXT")
+    if "config_json" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN config_json TEXT")
+    if "relay_user" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN relay_user TEXT DEFAULT 'titon'")
+
     # Strategy indicator registry
     conn.execute("""
         CREATE TABLE IF NOT EXISTS ai_strategy_indicators (
@@ -534,21 +543,27 @@ def seed_precision_scalp_indicators():
 
 def add_bot(bot_id: str, mode: str, account: str, strategy_tag: str,
             source_bot: str = None, relay_id: str = None,
-            entry_prompt: str = None, manage_prompt: str = None):
+            entry_prompt: str = None, manage_prompt: str = None,
+            strategy_name: str = None, config_json: str = None,
+            relay_user: str = "titon"):
     init_db()
     conn = db.get_connection()
     conn.execute("""
         INSERT INTO ai_bots (bot_id, mode, source_bot, relay_id, account,
-                             strategy_tag, entry_prompt, manage_prompt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                             strategy_tag, entry_prompt, manage_prompt,
+                             strategy_name, config_json, relay_user)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(bot_id) DO UPDATE SET
             mode = excluded.mode, source_bot = excluded.source_bot,
             relay_id = excluded.relay_id, account = excluded.account,
             strategy_tag = excluded.strategy_tag,
             entry_prompt = excluded.entry_prompt,
-            manage_prompt = excluded.manage_prompt
+            manage_prompt = excluded.manage_prompt,
+            strategy_name = excluded.strategy_name,
+            config_json = excluded.config_json,
+            relay_user = excluded.relay_user
     """, (bot_id, mode, source_bot, relay_id, account, strategy_tag,
-          entry_prompt, manage_prompt))
+          entry_prompt, manage_prompt, strategy_name, config_json, relay_user))
     conn.commit()
     conn.close()
 

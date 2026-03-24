@@ -290,6 +290,13 @@ def _update_candle(instrument: str, price: float, cvd_delta: int):
             except Exception as e:
                 logger.warning(f"CVD: failed to save bar to DB: {e}")
 
+            # Trigger Python strategy bots on bar close
+            try:
+                import strategy_runner
+                asyncio.ensure_future(strategy_runner.run_python_bots())
+            except Exception as e:
+                logger.warning(f"CVD: strategy runner error: {e}")
+
         # Start new candle
         _current_candle[instrument] = {
             "time": minute_ts,

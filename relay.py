@@ -689,13 +689,25 @@ async def ai_bots_create(request: Request, _user: dict = Depends(verify_bearer))
             raise HTTPException(status_code=400, detail=f"Missing field: {f}")
     if data["mode"] == "copy" and not data.get("source_bot"):
         raise HTTPException(status_code=400, detail="Copy mode requires source_bot")
+    if data["mode"] == "python" and not data.get("strategy_name"):
+        raise HTTPException(status_code=400, detail="Python mode requires strategy_name")
     ai_gate.add_bot(
         bot_id=data["bot_id"], mode=data["mode"],
         account=data["account"], strategy_tag=data["strategy_tag"],
-        source_bot=data.get("source_bot"), relay_id=data.get("relay_id"),
-        entry_prompt=data.get("entry_prompt"), manage_prompt=data.get("manage_prompt")
+        source_bot=data.get("source_bot"), relay_id=data.get("relay_id") or data["bot_id"],
+        entry_prompt=data.get("entry_prompt"), manage_prompt=data.get("manage_prompt"),
+        strategy_name=data.get("strategy_name"), config_json=data.get("config_json"),
+        relay_user=data.get("relay_user", "titon"),
     )
     return {"status": "ok", "bot_id": data["bot_id"]}
+
+
+@app.get("/webhook/ai/strategies")
+async def ai_strategies_list(_user: dict = Depends(verify_bearer)):
+    """List available Python strategies."""
+    from strategy_runner import STRATEGY_REGISTRY
+    return [{"name": name, "description": cls.description}
+            for name, cls in STRATEGY_REGISTRY.items()]
 
 
 @app.put("/webhook/ai/bots/{bot_id}")

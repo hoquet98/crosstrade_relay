@@ -84,12 +84,16 @@ def show_logs(relay_user: str = None, limit: int = 50):
 def add_bot():
     print("\n--- Add / Update Bot ---\n")
     bot_id = input("  Bot ID (unique name, e.g. 'aggressive_scalp'): ").strip()
-    mode = input("  Mode (normal/copy): ").strip().lower()
+    mode = input("  Mode (normal/copy/python): ").strip().lower()
 
     source_bot = None
     relay_id = None
+    strategy_name = None
     if mode == "copy":
         source_bot = input("  Source bot relay_id to copy from: ").strip()
+    elif mode == "python":
+        strategy_name = input("  Strategy name (e.g. 'ut_bot_trend'): ").strip()
+        relay_id = bot_id  # python bots use bot_id as relay_id
     else:
         relay_id = input("  Relay ID (Pine Script relay_id): ").strip()
 
