@@ -764,6 +764,25 @@ async def ai_bot_disable(bot_id: str, _user: dict = Depends(verify_bearer)):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ADMIN
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/admin/delete-bars")
+async def admin_delete_bars(request: Request, _user: dict = Depends(verify_bearer)):
+    """Delete bad bars by ID list. Body: {"ids": [55, 56]}"""
+    data = await request.json()
+    ids = data.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Missing 'ids' list")
+    conn = db.get_connection()
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(f"DELETE FROM ai_bars WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "deleted": len(ids)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # DEPLOY
 # ══════════════════════════════════════════════════════════════════════════════
 
