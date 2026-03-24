@@ -764,6 +764,48 @@ async def ai_bot_disable(bot_id: str, _user: dict = Depends(verify_bearer)):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# DEPLOY
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/deploy")
+async def deploy(_user: dict = Depends(verify_bearer)):
+    """Pull latest code from GitHub and restart the service.
+    Requires Bearer auth. The response may not arrive since the service restarts.
+    """
+    import subprocess
+
+    # Git pull
+    try:
+        result = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            cwd=r"C:\TradeRelay",
+            capture_output=True, text=True, timeout=30
+        )
+        pull_output = result.stdout.strip() + result.stderr.strip()
+        logger.info(f"Deploy: git pull -> {pull_output}")
+
+        if result.returncode != 0:
+            return {"status": "error", "details": f"git pull failed: {pull_output}"}
+
+        if "Already up to date" in pull_output:
+            return {"status": "ok", "details": "Already up to date", "restarted": False}
+
+    except Exception as e:
+        return {"status": "error", "details": f"git pull error: {e}"}
+
+    # Schedule restart (short delay so the response can go out)
+    async def restart_service():
+        await asyncio.sleep(1)
+        subprocess.Popen(
+            ["cmd", "/c", "net stop TradeRelay && net start TradeRelay"],
+            cwd=r"C:\TradeRelay"
+        )
+
+    asyncio.create_task(restart_service())
+    return {"status": "ok", "details": pull_output, "restarted": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 
