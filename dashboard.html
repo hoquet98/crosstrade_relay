@@ -921,8 +921,9 @@
   let cvdBarSeries = null;
   let chartInstrument = null;
 
+  const tzOffsetSec = new Date().getTimezoneOffset() * -60;  // local offset in seconds
   function isoToUnix(iso) {
-    return Math.floor(new Date(iso).getTime() / 1000);
+    return Math.floor(new Date(iso).getTime() / 1000) + tzOffsetSec;
   }
 
   function initChart() {
@@ -946,6 +947,12 @@
         borderColor: '#1e2030',
         timeVisible: true,
         secondsVisible: false,
+      },
+      localization: {
+        timeFormatter: (ts) => {
+          const d = new Date(ts * 1000);
+          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
       },
     });
 
@@ -987,6 +994,7 @@
         let t = c.time;
         if (!t && c.timestamp) t = isoToUnix(c.timestamp);
         if (typeof t === 'string') t = isoToUnix(t);
+        else if (typeof t === 'number') t = t + tzOffsetSec;  // raw unix needs offset too
         return { time: t, open: c.open, high: c.high, low: c.low, close: c.close };
       });
       candleSeries.setData(candles);
