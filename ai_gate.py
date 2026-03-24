@@ -524,6 +524,9 @@ def seed_precision_scalp_indicators():
         {"field_name": "session_bucket", "field_type": "string", "category": "session", "description": "Session time bucket"},
         {"field_name": "day_of_week", "field_type": "string", "category": "session", "description": "Day of week"},
         {"field_name": "mins_to_maintenance", "field_type": "number", "category": "session", "description": "Minutes until CME maintenance"},
+        {"field_name": "bar_time_et", "field_type": "string", "category": "time", "description": "Bar time in Eastern (e.g. 09:45 ET)"},
+        {"field_name": "bar_time_hhmm", "field_type": "number", "category": "time", "description": "Bar time as HHMM integer (e.g. 945)"},
+        {"field_name": "bar_time_unix", "field_type": "number", "category": "time", "description": "Bar time as Unix timestamp"},
         {"field_name": "last_5_closes", "field_type": "array", "category": "session", "description": "Last 5 bar close prices"},
         # cvd
         {"field_name": "cvd", "field_type": "number", "category": "cvd", "description": "Cumulative volume delta"},

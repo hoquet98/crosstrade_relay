@@ -170,10 +170,18 @@ class UtBotTrendStrategy(BaseStrategy):
         stoch_bull_cross = bool(stoch_k.iloc[i] > stoch_d.iloc[i] and stoch_k.iloc[-2] <= stoch_d.iloc[-2]) if len(stoch_k) > 1 else False
         stoch_bear_cross = bool(stoch_k.iloc[i] < stoch_d.iloc[i] and stoch_k.iloc[-2] >= stoch_d.iloc[-2]) if len(stoch_k) > 1 else False
 
-        # Session bucket (approximate from UTC hour)
+        # Time context — use proper ET conversion
         now = datetime.now(timezone.utc)
-        et_hour = (now.hour - 5) % 24  # rough ET offset
-        hhmm = et_hour * 100 + now.minute
+        # ET offset: -5 (EST) or -4 (EDT). March-Nov is EDT.
+        month = now.month
+        is_dst = 3 <= month <= 10  # approximate DST
+        et_offset = 4 if is_dst else 5
+        et_hour = (now.hour - et_offset) % 24
+        et_minute = now.minute
+        hhmm = et_hour * 100 + et_minute
+        bar_time_et = f"{et_hour:02d}:{et_minute:02d} ET"
+        bar_time_unix = int(now.timestamp())
+
         if hhmm < 1000:
             session_bucket = "open_drive"
         elif hhmm < 1130:
@@ -184,6 +192,11 @@ class UtBotTrendStrategy(BaseStrategy):
             session_bucket = "afternoon"
         else:
             session_bucket = "close"
+
+        # Minutes to CME maintenance (5pm ET = 1700)
+        maint_start_mins = 17 * 60
+        current_mins = et_hour * 60 + et_minute
+        mins_to_maint = maint_start_mins - current_mins if maint_start_mins > current_mins else 0
 
         dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         day_of_week = dow_names[now.weekday()]
@@ -277,7 +290,10 @@ class UtBotTrendStrategy(BaseStrategy):
             "volume": _safe(volume.iloc[i]),
             "session_bucket": session_bucket,
             "day_of_week": day_of_week,
-            "mins_to_maintenance": 0,
+            "mins_to_maintenance": mins_to_maint,
+            "bar_time_unix": bar_time_unix,
+            "bar_time_et": bar_time_et,
+            "bar_time_hhmm": hhmm,
             "price": _safe(close.iloc[i]),
         }
 

@@ -415,6 +415,9 @@ f_barPayload() =>
     p += ',"session_bucket":' + f_quote(sessionBucket)
     p += ',"day_of_week":' + f_quote(dowStr)
     p += ',"mins_to_maintenance":' + str.tostring(minsToMaint)
+    p += ',"bar_time_unix":' + str.tostring(time / 1000)
+    p += ',"bar_time_et":' + f_quote(str.tostring(currentHour, "00") + ":" + str.tostring(currentMinute, "00") + " ET")
+    p += ',"bar_time_hhmm":' + str.tostring(currentHHMM)
     p += ',"price":' + str.tostring(math.round(close, 2))
     p += '}'
     p
