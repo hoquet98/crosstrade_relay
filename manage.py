@@ -9,10 +9,15 @@ Usage:
     python manage.py positions [relay_user]
     python manage.py clear-position <relay_user> <account> <instrument>
     python manage.py logs [relay_user] [--limit N]
+    python manage.py add-bot
+    python manage.py list-bots
+    python manage.py enable-bot <bot_id>
+    python manage.py disable-bot <bot_id>
 """
 
 import sys
 import database as db
+import ai_gate
 
 
 def add_user():
@@ -76,8 +81,53 @@ def show_logs(relay_user: str = None, limit: int = 50):
               f"{log['result']:<12} {(log['details'] or '')[:50]}")
 
 
+def add_bot():
+    print("\n--- Add / Update Bot ---\n")
+    bot_id = input("  Bot ID (unique name, e.g. 'aggressive_scalp'): ").strip()
+    mode = input("  Mode (normal/copy): ").strip().lower()
+
+    source_bot = None
+    relay_id = None
+    if mode == "copy":
+        source_bot = input("  Source bot relay_id to copy from: ").strip()
+    else:
+        relay_id = input("  Relay ID (Pine Script relay_id): ").strip()
+
+    account = input("  Target account (e.g. 'Sim101'): ").strip()
+    strategy_tag = input("  Strategy tag for CrossTrade: ").strip()
+
+    entry_prompt = input("  Custom entry prompt (press Enter for default): ").strip() or None
+    manage_prompt = input("  Custom manage prompt (press Enter for default): ").strip() or None
+
+    if not all([bot_id, mode, account, strategy_tag]):
+        print("\n  [ERROR] bot_id, mode, account, and strategy_tag are required.")
+        return
+
+    ai_gate.add_bot(
+        bot_id=bot_id, mode=mode, account=account,
+        strategy_tag=strategy_tag, source_bot=source_bot,
+        relay_id=relay_id, entry_prompt=entry_prompt,
+        manage_prompt=manage_prompt
+    )
+    print(f"\n  [OK] Bot '{bot_id}' saved ({mode} mode).")
+
+
+def show_bots():
+    bots = ai_gate.list_bots()
+    if not bots:
+        print("\n  No bots configured.")
+        return
+    print(f"\n  {'bot_id':<25} {'mode':<8} {'source':<20} {'account':<15} {'tag':<15} {'enabled'}")
+    print(f"  {'-'*100}")
+    for b in bots:
+        src = b.get('source_bot') or b.get('relay_id') or ''
+        enabled = 'YES' if b['enabled'] else 'NO'
+        print(f"  {b['bot_id']:<25} {b['mode']:<8} {src:<20} {b['account']:<15} {b['strategy_tag']:<15} {enabled}")
+
+
 def main():
     db.init_db()
+    ai_gate.init_db()
 
     if len(sys.argv) < 2:
         print(__doc__)
@@ -127,6 +177,22 @@ def main():
             elif not arg.startswith("--"):
                 relay_user = arg
         show_logs(relay_user, limit)
+    elif cmd == "add-bot":
+        add_bot()
+    elif cmd == "list-bots":
+        show_bots()
+    elif cmd == "enable-bot":
+        if len(sys.argv) < 3:
+            print("Usage: python manage.py enable-bot <bot_id>")
+            return
+        ai_gate.set_bot_enabled(sys.argv[2], True)
+        print(f"\n  [OK] Bot '{sys.argv[2]}' enabled.")
+    elif cmd == "disable-bot":
+        if len(sys.argv) < 3:
+            print("Usage: python manage.py disable-bot <bot_id>")
+            return
+        ai_gate.set_bot_enabled(sys.argv[2], False)
+        print(f"\n  [OK] Bot '{sys.argv[2]}' disabled.")
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)

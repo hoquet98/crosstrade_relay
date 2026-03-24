@@ -219,9 +219,86 @@ def init_db():
     elif "bar_count" not in pos_cols:
         conn.execute("ALTER TABLE ai_positions ADD COLUMN bar_count INTEGER DEFAULT 0")
 
+    # Bot configuration table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_bots (
+            bot_id          TEXT PRIMARY KEY,
+            mode            TEXT NOT NULL DEFAULT 'normal',
+            source_bot      TEXT,
+            relay_id        TEXT,
+            account         TEXT NOT NULL,
+            strategy_tag    TEXT NOT NULL DEFAULT 'AIGate',
+            entry_prompt    TEXT,
+            manage_prompt   TEXT,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.commit()
     conn.close()
     _migrated = True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BOT CONFIG OPERATIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def add_bot(bot_id: str, mode: str, account: str, strategy_tag: str,
+            source_bot: str = None, relay_id: str = None,
+            entry_prompt: str = None, manage_prompt: str = None):
+    init_db()
+    conn = db.get_connection()
+    conn.execute("""
+        INSERT INTO ai_bots (bot_id, mode, source_bot, relay_id, account,
+                             strategy_tag, entry_prompt, manage_prompt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(bot_id) DO UPDATE SET
+            mode = excluded.mode, source_bot = excluded.source_bot,
+            relay_id = excluded.relay_id, account = excluded.account,
+            strategy_tag = excluded.strategy_tag,
+            entry_prompt = excluded.entry_prompt,
+            manage_prompt = excluded.manage_prompt
+    """, (bot_id, mode, source_bot, relay_id, account, strategy_tag,
+          entry_prompt, manage_prompt))
+    conn.commit()
+    conn.close()
+
+
+def get_bot(bot_id: str) -> dict | None:
+    init_db()
+    conn = db.get_connection()
+    row = conn.execute("SELECT * FROM ai_bots WHERE bot_id = ?", (bot_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_bots() -> list[dict]:
+    init_db()
+    conn = db.get_connection()
+    rows = conn.execute("SELECT * FROM ai_bots ORDER BY created_at").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_bot_enabled(bot_id: str, enabled: bool):
+    init_db()
+    conn = db.get_connection()
+    conn.execute("UPDATE ai_bots SET enabled = ? WHERE bot_id = ?", (1 if enabled else 0, bot_id))
+    conn.commit()
+    conn.close()
+
+
+def _get_copy_bots_for_source(source_relay_id: str) -> list[dict]:
+    """Get all enabled copy bots that mirror a given source relay_id."""
+    init_db()
+    conn = db.get_connection()
+    rows = conn.execute(
+        "SELECT * FROM ai_bots WHERE mode = 'copy' AND source_bot = ? AND enabled = 1",
+        (source_relay_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -375,25 +452,34 @@ def _close_trade(relay_user: str, account: str, instrument: str,
     conn.close()
 
 
-def get_trades(relay_user: str = None, limit: int = 50) -> list[dict]:
+def get_trades(relay_user: str = None, relay_id: str = None, limit: int = 50) -> list[dict]:
     init_db()
     conn = db.get_connection()
+    where, params = [], []
     if relay_user:
-        rows = conn.execute(
-            "SELECT * FROM ai_trades WHERE relay_user = ? ORDER BY id DESC LIMIT ?",
-            (relay_user, limit)).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM ai_trades ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        where.append("relay_user = ?"); params.append(relay_user)
+    if relay_id:
+        where.append("relay_id = ?"); params.append(relay_id)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    params.append(limit)
+    rows = conn.execute(
+        f"SELECT * FROM ai_trades {clause} ORDER BY id DESC LIMIT ?", params
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def get_trade_stats(relay_user: str = None) -> dict:
+def get_trade_stats(relay_user: str = None, relay_id: str = None) -> dict:
     init_db()
     conn = db.get_connection()
-    where = "WHERE relay_user = ? AND status = 'closed'" if relay_user else "WHERE status = 'closed'"
-    params = (relay_user,) if relay_user else ()
+    conditions = ["status = 'closed'"]
+    params = []
+    if relay_user:
+        conditions.append("relay_user = ?"); params.append(relay_user)
+    if relay_id:
+        conditions.append("relay_id = ?"); params.append(relay_id)
+    where = "WHERE " + " AND ".join(conditions)
+    params = tuple(params)
 
     row = conn.execute(f"""
         SELECT
@@ -448,25 +534,33 @@ def _log_decision(
     conn.close()
 
 
-def get_logs(relay_user: str = None, limit: int = 50) -> list[dict]:
+def get_logs(relay_user: str = None, relay_id: str = None, limit: int = 50) -> list[dict]:
     init_db()
     conn = db.get_connection()
+    where, params = [], []
     if relay_user:
-        rows = conn.execute(
-            "SELECT * FROM ai_gate_logs WHERE relay_user = ? ORDER BY id DESC LIMIT ?",
-            (relay_user, limit)).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM ai_gate_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        where.append("relay_user = ?"); params.append(relay_user)
+    if relay_id:
+        where.append("relay_id = ?"); params.append(relay_id)
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    params.append(limit)
+    rows = conn.execute(
+        f"SELECT * FROM ai_gate_logs {clause} ORDER BY id DESC LIMIT ?", params
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def get_stats(relay_user: str = None) -> dict:
+def get_stats(relay_user: str = None, relay_id: str = None) -> dict:
     init_db()
     conn = db.get_connection()
-    where = "WHERE relay_user = ?" if relay_user else ""
-    params = (relay_user,) if relay_user else ()
+    conditions, params = [], []
+    if relay_user:
+        conditions.append("relay_user = ?"); params.append(relay_user)
+    if relay_id:
+        conditions.append("relay_id = ?"); params.append(relay_id)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params = tuple(params)
 
     rows = conn.execute(f"""
         SELECT ai_decision, COUNT(*) as count, AVG(ai_latency_ms) as avg_latency_ms
@@ -1050,19 +1144,52 @@ async def process_bar(payload: dict, body_text: str):
         FLAT + signal    → call AI for entry decision
         FLAT + no signal → skip (no cost)
         IN_POSITION      → compute exit score, check safety, maybe call AI
+
+    After processing the source bot, fans out to any enabled copy bots.
     """
+    relay_user = payload.get("relay_user", "")
+    relay_id = payload.get("relay_id", "")
+
+    if not relay_user or not relay_id:
+        logger.warning(f"Bar missing required fields: {payload.keys()}")
+        return
+
+    # Process the source bot (normal mode)
+    await _process_bar_for_bot(payload, body_text)
+
+    # Fan out to copy bots that mirror this relay_id
+    copy_bots = _get_copy_bots_for_source(relay_id)
+    for bot in copy_bots:
+        # Build modified payload with copy bot's overrides
+        bot_payload = {**payload}
+        bot_payload["relay_id"] = bot["bot_id"]
+        bot_payload["account"] = bot["account"]
+        bot_payload["strategy_tag"] = bot["strategy_tag"]
+        bot_body = json.dumps(bot_payload)
+
+        logger.info(f"[{relay_user}/{bot['bot_id']}] Copy bot processing (source: {relay_id})")
+        await _process_bar_for_bot(
+            bot_payload, bot_body,
+            entry_prompt=bot.get("entry_prompt"),
+            manage_prompt=bot.get("manage_prompt")
+        )
+
+
+async def _process_bar_for_bot(payload: dict, body_text: str,
+                                entry_prompt: str = None,
+                                manage_prompt: str = None):
+    """Process a single bar for one bot (source or copy)."""
     relay_user = payload.get("relay_user", "")
     relay_id = payload.get("relay_id", "")
     account = payload.get("account", "")
     instrument = payload.get("instrument", "")
-    strategy = payload.get("strategy", "unknown")
 
     if not relay_user or not account or not instrument:
         logger.warning(f"Bar missing required fields: {payload.keys()}")
         return
 
-    # Serialize per instrument to prevent race conditions
-    lock_key = f"{relay_user}:{account}:{instrument}"
+    # Serialize per bot+instrument to prevent race conditions
+    lock_key = f"{relay_user}:{relay_id}:{account}:{instrument}"
     async with _get_lock(lock_key):
         position = _get_position(relay_user, account, instrument)
 
@@ -1073,18 +1200,21 @@ async def process_bar(payload: dict, body_text: str):
 
             if long_sig or short_sig:
                 direction = "long" if long_sig else "short"
-                await _handle_entry(payload, body_text, direction)
+                await _handle_entry(payload, body_text, direction,
+                                    entry_prompt=entry_prompt)
             # else: flat, no signal — nothing to do
         else:
             # === IN POSITION — manage ===
-            await _handle_manage(payload, body_text, position)
+            await _handle_manage(payload, body_text, position,
+                                 manage_prompt=manage_prompt)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY HANDLER
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _handle_entry(payload: dict, body_text: str, direction: str):
+async def _handle_entry(payload: dict, body_text: str, direction: str,
+                        entry_prompt: str = None):
     """Flat + signal detected. Ask AI whether to enter."""
     relay_user = payload["relay_user"]
     relay_id = payload["relay_id"]
@@ -1095,10 +1225,11 @@ async def _handle_entry(payload: dict, body_text: str, direction: str):
 
     logger.info(f"[{relay_user}/{relay_id}] Signal: {direction.upper()} {instrument} (confluence {confluence})")
 
-    # Call AI for entry decision
+    # Call AI for entry decision (use custom prompt if provided)
     user_msg = _build_entry_message(payload)
+    prompt = entry_prompt or AI_ENTRY_PROMPT
     ai_decision, ai_reason, ai_latency_ms, ai_raw = await _call_anthropic(
-        user_msg, AI_ENTRY_PROMPT
+        user_msg, prompt
     )
 
     logger.info(f"[{relay_user}/{relay_id}] AI: {ai_decision} ({ai_latency_ms}ms) — {ai_reason}")
@@ -1166,7 +1297,8 @@ async def _handle_entry(payload: dict, body_text: str, direction: str):
 # MANAGE HANDLER
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _handle_manage(payload: dict, body_text: str, position: dict):
+async def _handle_manage(payload: dict, body_text: str, position: dict,
+                         manage_prompt: str = None):
     """In position. Compute P&L, exit score, check safety nets, maybe call AI."""
     relay_user = position["relay_user"]
     relay_id = position["relay_id"]
@@ -1271,8 +1403,9 @@ async def _handle_manage(payload: dict, body_text: str, position: dict):
     # --- Call AI ---
     user_msg = _build_manage_message(payload, position, exit_score,
                                      ticks_pnl, dollar_pnl, bar_count)
+    prompt = manage_prompt or AI_MANAGE_PROMPT
     ai_decision, ai_reason, ai_latency_ms, ai_raw = await _call_anthropic(
-        user_msg, AI_MANAGE_PROMPT
+        user_msg, prompt
     )
 
     logger.info(

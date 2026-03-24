@@ -634,13 +634,13 @@ async def webhook_ai(request: Request):
 
 
 @app.get("/webhook/ai/logs")
-async def ai_logs_endpoint(relay_user: str = None, limit: int = 50):
-    return ai_gate.get_logs(relay_user, limit)
+async def ai_logs_endpoint(relay_user: str = None, relay_id: str = None, limit: int = 50):
+    return ai_gate.get_logs(relay_user, relay_id=relay_id, limit=limit)
 
 
 @app.get("/webhook/ai/stats")
-async def ai_stats_endpoint(relay_user: str = None):
-    return ai_gate.get_stats(relay_user)
+async def ai_stats_endpoint(relay_user: str = None, relay_id: str = None):
+    return ai_gate.get_stats(relay_user, relay_id=relay_id)
 
 
 @app.get("/webhook/ai/positions")
@@ -662,13 +662,52 @@ async def ai_positions_clear(request: Request):
 
 
 @app.get("/webhook/ai/trades")
-async def ai_trades_endpoint(relay_user: str = None, limit: int = 50):
-    return ai_gate.get_trades(relay_user, limit)
+async def ai_trades_endpoint(relay_user: str = None, relay_id: str = None, limit: int = 50):
+    return ai_gate.get_trades(relay_user, relay_id=relay_id, limit=limit)
 
 
 @app.get("/webhook/ai/trades/stats")
-async def ai_trade_stats_endpoint(relay_user: str = None):
-    return ai_gate.get_trade_stats(relay_user)
+async def ai_trade_stats_endpoint(relay_user: str = None, relay_id: str = None):
+    return ai_gate.get_trade_stats(relay_user, relay_id=relay_id)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BOT MANAGEMENT
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/webhook/ai/bots")
+async def ai_bots_list():
+    return ai_gate.list_bots()
+
+
+@app.post("/webhook/ai/bots")
+async def ai_bots_create(request: Request, _user: dict = Depends(verify_bearer)):
+    data = await request.json()
+    required = ["bot_id", "mode", "account", "strategy_tag"]
+    for f in required:
+        if f not in data:
+            raise HTTPException(status_code=400, detail=f"Missing field: {f}")
+    if data["mode"] == "copy" and not data.get("source_bot"):
+        raise HTTPException(status_code=400, detail="Copy mode requires source_bot")
+    ai_gate.add_bot(
+        bot_id=data["bot_id"], mode=data["mode"],
+        account=data["account"], strategy_tag=data["strategy_tag"],
+        source_bot=data.get("source_bot"), relay_id=data.get("relay_id"),
+        entry_prompt=data.get("entry_prompt"), manage_prompt=data.get("manage_prompt")
+    )
+    return {"status": "ok", "bot_id": data["bot_id"]}
+
+
+@app.put("/webhook/ai/bots/{bot_id}/enable")
+async def ai_bot_enable(bot_id: str, _user: dict = Depends(verify_bearer)):
+    ai_gate.set_bot_enabled(bot_id, True)
+    return {"status": "ok", "bot_id": bot_id, "enabled": True}
+
+
+@app.put("/webhook/ai/bots/{bot_id}/disable")
+async def ai_bot_disable(bot_id: str, _user: dict = Depends(verify_bearer)):
+    ai_gate.set_bot_enabled(bot_id, False)
+    return {"status": "ok", "bot_id": bot_id, "enabled": False}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -367,6 +367,10 @@
     <input type="number" id="pollInterval" value="5" min="2" max="60" style="width:50px"> <span style="color:var(--text-dim);font-size:11px">sec</span>
     <label style="margin-left:16px">Rows</label>
     <input type="number" id="logLimit" value="50" min="10" max="500">
+    <label style="margin-left:16px">Bot</label>
+    <select id="filterBot">
+      <option value="">All Bots</option>
+    </select>
     <label style="margin-left:16px">Filter</label>
     <select id="filterDecision">
       <option value="">All Decisions</option>
@@ -451,6 +455,44 @@
 
   function el(id) { return document.getElementById(id); }
 
+  function getBotFilter() { return el('filterBot').value; }
+  function botParam() { const b = getBotFilter(); return b ? `&relay_id=${encodeURIComponent(b)}` : ''; }
+
+  // ── Load bots ──
+  async function fetchBots() {
+    try {
+      const [botsResp, logsResp] = await Promise.all([
+        fetch(`${BASE}/webhook/ai/bots`),
+        fetch(`${BASE}/webhook/ai/logs?limit=200`)
+      ]);
+      const bots = botsResp.ok ? await botsResp.json() : [];
+      const logs = logsResp.ok ? await logsResp.json() : [];
+      const sel = el('filterBot');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">All Bots</option>';
+      // Collect all known relay_ids
+      const seen = new Set();
+      bots.forEach(b => {
+        seen.add(b.bot_id);
+        const opt = document.createElement('option');
+        opt.value = b.bot_id;
+        opt.textContent = `${b.bot_id} (${b.mode})`;
+        sel.appendChild(opt);
+      });
+      // Add relay_ids from logs that aren't configured bots
+      logs.forEach(l => {
+        if (l.relay_id && !seen.has(l.relay_id)) {
+          seen.add(l.relay_id);
+          const opt = document.createElement('option');
+          opt.value = l.relay_id;
+          opt.textContent = l.relay_id;
+          sel.appendChild(opt);
+        }
+      });
+      sel.value = current;
+    } catch (e) {}
+  }
+
   // ── Tabs ──
   function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -475,7 +517,7 @@
   // ── Fetch stats ──
   async function fetchStats() {
     try {
-      const resp = await fetch(`${BASE}/webhook/ai/stats`);
+      const resp = await fetch(`${BASE}/webhook/ai/stats?x=1${botParam()}`);
       if (!resp.ok) return;
       const data = await resp.json();
       const agree = data.AGREE?.count || 0;
@@ -495,7 +537,7 @@
   // ── Fetch trade stats ──
   async function fetchTradeStats() {
     try {
-      const resp = await fetch(`${BASE}/webhook/ai/trades/stats`);
+      const resp = await fetch(`${BASE}/webhook/ai/trades/stats?x=1${botParam()}`);
       if (!resp.ok) return;
       const data = await resp.json();
 
@@ -517,7 +559,7 @@
   async function fetchLogs() {
     try {
       const limit = el('logLimit').value || 50;
-      const resp = await fetch(`${BASE}/webhook/ai/logs?limit=${limit}`);
+      const resp = await fetch(`${BASE}/webhook/ai/logs?limit=${limit}${botParam()}`);
       if (!resp.ok) return;
       const logs = await resp.json();
       const filterVal = el('filterDecision').value;
@@ -561,7 +603,7 @@
   async function fetchTrades() {
     try {
       const limit = el('logLimit').value || 50;
-      const resp = await fetch(`${BASE}/webhook/ai/trades?limit=${limit}`);
+      const resp = await fetch(`${BASE}/webhook/ai/trades?limit=${limit}${botParam()}`);
       if (!resp.ok) return;
       const trades = await resp.json();
 
@@ -646,7 +688,7 @@
   function closeModal(e) { if (e.target === el('modalOverlay')) el('modalOverlay').classList.remove('active'); }
 
   async function fetchAll() {
-    await Promise.all([fetchHealth(), fetchStats(), fetchTradeStats(), fetchLogs()]);
+    await Promise.all([fetchHealth(), fetchBots(), fetchStats(), fetchTradeStats(), fetchLogs()]);
   }
 
   function startPolling() {
@@ -658,6 +700,7 @@
 
   el('pollInterval').addEventListener('change', startPolling);
   el('filterDecision').addEventListener('change', fetchLogs);
+  el('filterBot').addEventListener('change', () => { fetchAll(); });
   el('logLimit').addEventListener('change', () => { fetchLogs(); fetchTrades(); });
 
   fetchAll();
