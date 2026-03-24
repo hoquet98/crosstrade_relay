@@ -869,7 +869,10 @@ async def cvd_chart_data(instrument: str, relay_id: str = None, limit: int = 240
 
     # Get trade markers from decision logs
     markers = []
-    inst_pattern = f'%{instrument.replace("1!", "").replace("!", "")}%'
+    # Extract root symbol for matching: "MNQ JUN26" → "MNQ", "MNQ1!" → "MNQ"
+    import re
+    root = re.split(r'[\s0-9!]', instrument)[0]
+    inst_pattern = f'%{root}%'
 
     conn = db.get_connection()
 
