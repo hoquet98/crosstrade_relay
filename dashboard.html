@@ -921,9 +921,13 @@
   let cvdBarSeries = null;
   let chartInstrument = null;
 
-  const tzOffsetSec = new Date().getTimezoneOffset() * -60;  // local offset in seconds
-  function isoToUnix(iso) {
-    return Math.floor(new Date(iso).getTime() / 1000) + tzOffsetSec;
+  // Lightweight Charts displays unix timestamps as UTC on the axis.
+  // To show local time, we add the timezone offset so UTC rendering = local time.
+  const tzOffsetSec = new Date().getTimezoneOffset() * -60;
+  function toLocalChartTime(ts) {
+    // ts can be ISO string or unix seconds
+    if (typeof ts === 'string') ts = Math.floor(new Date(ts).getTime() / 1000);
+    return ts + tzOffsetSec;
   }
 
   function initChart() {
@@ -947,12 +951,6 @@
         borderColor: '#1e2030',
         timeVisible: true,
         secondsVisible: false,
-      },
-      localization: {
-        timeFormatter: (ts) => {
-          const d = new Date(ts * 1000);
-          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        },
       },
     });
 
@@ -989,12 +987,10 @@
       const data = await resp.json();
       if (!data || !data.candles || data.candles.length === 0) return;
 
-      // Process candles — handle both DB format (ISO timestamp) and in-memory format (unix time)
+      // Process candles — all timestamps converted to local chart time
       const candles = data.candles.map(c => {
-        let t = c.time;
-        if (!t && c.timestamp) t = isoToUnix(c.timestamp);
-        if (typeof t === 'string') t = isoToUnix(t);
-        else if (typeof t === 'number') t = t + tzOffsetSec;  // raw unix needs offset too
+        let t = c.timestamp || c.time;
+        t = toLocalChartTime(t);
         return { time: t, open: c.open, high: c.high, low: c.low, close: c.close };
       });
       candleSeries.setData(candles);
@@ -1004,7 +1000,7 @@
         const chartMarkers = [];
         for (const m of data.markers) {
           let t = m.time;
-          if (typeof t === 'string') t = isoToUnix(t);
+          if (typeof t === 'string') t = toLocalChartTime(t);
           if (!t) continue;
 
           const dir = (m.direction || 'long').toLowerCase();
