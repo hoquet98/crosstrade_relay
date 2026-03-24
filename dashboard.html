@@ -1002,6 +1002,8 @@
           let t = m.time;
           if (typeof t === 'string') t = toLocalChartTime(t);
           if (!t) continue;
+          // Floor to start of minute so marker lands on the correct 1-min bar
+          t = Math.floor(t / 60) * 60;
 
           const dir = (m.direction || 'long').toLowerCase();
 
