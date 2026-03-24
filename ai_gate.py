@@ -512,6 +512,32 @@ def set_bot_enabled(bot_id: str, enabled: bool):
     conn.close()
 
 
+def update_bot(bot_id: str, **kwargs):
+    """Update specific fields on a bot config."""
+    init_db()
+    allowed = {'mode', 'source_bot', 'relay_id', 'account', 'strategy_tag',
+               'entry_prompt', 'manage_prompt', 'enabled'}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [bot_id]
+    conn = db.get_connection()
+    conn.execute(f"UPDATE ai_bots SET {set_clause} WHERE bot_id = ?", values)
+    conn.commit()
+    conn.close()
+
+
+def delete_bot(bot_id: str):
+    """Delete a bot and its indicator selections."""
+    init_db()
+    conn = db.get_connection()
+    conn.execute("DELETE FROM ai_bots WHERE bot_id = ?", (bot_id,))
+    conn.execute("DELETE FROM ai_bot_indicators WHERE bot_id = ?", (bot_id,))
+    conn.commit()
+    conn.close()
+
+
 def _get_copy_bots_for_source(source_relay_id: str) -> list[dict]:
     """Get all enabled copy bots that mirror a given source relay_id."""
     init_db()
@@ -1410,6 +1436,14 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
     if not relay_user or not account or not instrument:
         logger.warning(f"Bar missing required fields: {payload.keys()}")
         return
+
+    # Auto-register source bots that don't have a config yet
+    bot = get_bot(relay_id)
+    if not bot:
+        add_bot(bot_id=relay_id, mode='normal', account=account,
+                strategy_tag=payload.get('strategy_tag', relay_id),
+                relay_id=relay_id)
+        logger.info(f"[{relay_user}/{relay_id}] Auto-created bot config (mode=normal)")
 
     # Serialize per bot+instrument to prevent race conditions
     lock_key = f"{relay_user}:{relay_id}:{account}:{instrument}"

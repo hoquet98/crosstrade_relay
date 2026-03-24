@@ -698,6 +698,19 @@ async def ai_bots_create(request: Request, _user: dict = Depends(verify_bearer))
     return {"status": "ok", "bot_id": data["bot_id"]}
 
 
+@app.put("/webhook/ai/bots/{bot_id}")
+async def ai_bot_update(bot_id: str, request: Request, _user: dict = Depends(verify_bearer)):
+    data = await request.json()
+    ai_gate.update_bot(bot_id, **data)
+    return {"status": "ok", "bot_id": bot_id}
+
+
+@app.delete("/webhook/ai/bots/{bot_id}")
+async def ai_bot_delete(bot_id: str, _user: dict = Depends(verify_bearer)):
+    ai_gate.delete_bot(bot_id)
+    return {"status": "ok", "bot_id": bot_id}
+
+
 # ── Strategy Indicator endpoints ──
 
 @app.get("/webhook/ai/strategies/{strategy_id}/indicators")

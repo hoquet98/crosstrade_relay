@@ -375,6 +375,13 @@
   .prompt-ref { margin-top: 12px; padding: 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; }
   .prompt-ref-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 8px; }
   .prompt-ref-list { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-secondary); line-height: 1.6; columns: 2; }
+
+  .wiz-btn-danger {
+    background: transparent; color: var(--disagree); border-color: var(--disagree);
+  }
+  .wiz-btn-danger:hover { background: var(--disagree-bg); }
+  .wizard-footer-left { display: flex; gap: 8px; }
+  .wizard-footer-right { display: flex; gap: 8px; }
 </style>
 </head>
 <body>
@@ -477,6 +484,7 @@
       <option value="">All Bots</option>
     </select>
     <button class="refresh-btn" id="addBotBtn" onclick="openWizard()" style="margin-left:8px; background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600;">+ Add Bot</button>
+    <button class="refresh-btn" id="editBotBtn" onclick="editBot()" style="display:none">Edit</button>
     <label style="margin-left:16px">Filter</label>
     <select id="filterDecision">
       <option value="">All Decisions</option>
@@ -559,7 +567,7 @@
 <div class="wizard-overlay" id="wizardOverlay" onclick="if(event.target===this)closeWizard()">
   <div class="wizard-modal">
     <div class="wizard-header">
-      <h3>Create New Bot</h3>
+      <h3 id="wizardTitle">Create New Bot</h3>
       <button class="modal-close" onclick="closeWizard()">&times;</button>
     </div>
     <div class="wizard-steps">
@@ -570,8 +578,13 @@
     </div>
     <div class="wizard-body" id="wizardBody"></div>
     <div class="wizard-footer">
-      <button class="wiz-btn wiz-btn-secondary" id="wizBack" onclick="wizardBack()">Back</button>
-      <button class="wiz-btn wiz-btn-primary" id="wizNext" onclick="wizardNext()">Next</button>
+      <div class="wizard-footer-left">
+        <button class="wiz-btn wiz-btn-secondary" id="wizBack" onclick="wizardBack()">Back</button>
+        <button class="wiz-btn wiz-btn-danger" id="wizDelete" onclick="deleteBot()" style="display:none">Delete Bot</button>
+      </div>
+      <div class="wizard-footer-right">
+        <button class="wiz-btn wiz-btn-primary" id="wizNext" onclick="wizardNext()">Next</button>
+      </div>
     </div>
   </div>
 </div>
@@ -827,7 +840,10 @@
 
   el('pollInterval').addEventListener('change', startPolling);
   el('filterDecision').addEventListener('change', fetchLogs);
-  el('filterBot').addEventListener('change', () => { fetchAll(); });
+  el('filterBot').addEventListener('change', () => {
+    el('editBotBtn').style.display = getBotFilter() ? 'inline-block' : 'none';
+    fetchAll();
+  });
   el('logLimit').addEventListener('change', () => { fetchLogs(); fetchTrades(); });
 
   fetchAll();
@@ -972,6 +988,8 @@
   let wizStep = 1;
   let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', indicators: {}, entry_prompt: '', manage_prompt: '' };
   let wizIndicators = []; // fetched from API
+  let wizardEditMode = false;
+  let wizardEditBotId = null;
 
   const DEFAULT_ENTRY_PROMPT = `You are a trade conviction filter for algorithmic futures trading. You receive a JSON payload of technical indicator values computed at the moment a trading strategy fires a signal. Your job is to decide whether the signal has enough edge to execute.
 
@@ -1054,8 +1072,54 @@ REASON: [one concise sentence]`;
 
   function openWizard() {
     wizStep = 1;
+    wizardEditMode = false;
+    wizardEditBotId = null;
     wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', indicators: {}, entry_prompt: DEFAULT_ENTRY_PROMPT, manage_prompt: DEFAULT_MANAGE_PROMPT };
     wizIndicators = [];
+    el('wizardTitle').textContent = 'Create New Bot';
+    el('wizDelete').style.display = 'none';
+    el('wizardOverlay').classList.add('active');
+    renderWizardStep();
+  }
+
+  async function editBot() {
+    const botId = getBotFilter();
+    if (!botId) return;
+
+    wizardEditMode = true;
+    wizardEditBotId = botId;
+    wizStep = 1;
+    wizIndicators = [];
+
+    // Fetch bot config
+    let bots = [];
+    try {
+      const resp = await fetch(`${BASE}/webhook/ai/bots`);
+      if (resp.ok) bots = await resp.json();
+    } catch (e) {}
+    const bot = bots.find(b => b.bot_id === botId);
+    if (!bot) { alert('Bot not found'); return; }
+
+    // Fetch bot indicators
+    let indicators = {};
+    try {
+      const resp = await fetch(`${BASE}/webhook/ai/bots/${encodeURIComponent(botId)}/indicators`);
+      if (resp.ok) indicators = await resp.json();
+    } catch (e) {}
+
+    wizData = {
+      bot_id: bot.bot_id,
+      mode: bot.mode || 'normal',
+      source_bot: bot.source_bot || '',
+      account: bot.account || '',
+      strategy_tag: bot.strategy_tag || 'AIGate',
+      indicators: indicators,
+      entry_prompt: bot.entry_prompt || DEFAULT_ENTRY_PROMPT,
+      manage_prompt: bot.manage_prompt || DEFAULT_MANAGE_PROMPT,
+    };
+
+    el('wizardTitle').textContent = 'Edit Bot';
+    el('wizDelete').style.display = 'inline-block';
     el('wizardOverlay').classList.add('active');
     renderWizardStep();
   }
@@ -1076,7 +1140,11 @@ REASON: [one concise sentence]`;
     const backBtn = el('wizBack');
     const nextBtn = el('wizNext');
     backBtn.style.visibility = wizStep === 1 ? 'hidden' : 'visible';
-    nextBtn.textContent = wizStep === 4 ? 'Create Bot' : 'Next';
+    if (wizStep === 4) {
+      nextBtn.textContent = wizardEditMode ? 'Save Changes' : 'Create Bot';
+    } else {
+      nextBtn.textContent = 'Next';
+    }
 
     const body = el('wizardBody');
 
@@ -1104,7 +1172,7 @@ REASON: [one concise sentence]`;
       <div class="wiz-row">
         <div class="wiz-field">
           <label>Bot ID</label>
-          <input type="text" id="wizBotId" value="${wizData.bot_id}" placeholder="e.g. snipe_sim1">
+          <input type="text" id="wizBotId" value="${wizData.bot_id}" placeholder="e.g. snipe_sim1" ${wizardEditMode ? 'readonly style="opacity:0.6;cursor:not-allowed"' : ''}>
         </div>
         <div class="wiz-field">
           <label>Mode</label>
@@ -1300,7 +1368,11 @@ REASON: [one concise sentence]`;
       renderWizardStep();
     } else if (wizStep === 4) {
       saveStep4();
-      await createBot();
+      if (wizardEditMode) {
+        await saveBot();
+      } else {
+        await createBot();
+      }
     }
   }
 
@@ -1359,6 +1431,96 @@ REASON: [one concise sentence]`;
     } finally {
       nextBtn.disabled = false;
       nextBtn.textContent = 'Create Bot';
+    }
+  }
+
+  async function saveBot() {
+    const nextBtn = el('wizNext');
+    nextBtn.disabled = true;
+    nextBtn.textContent = 'Saving...';
+
+    try {
+      let apiKey = sessionStorage.getItem('ct_api_key');
+      if (!apiKey) {
+        apiKey = prompt('Enter your API key (Bearer token):');
+        if (!apiKey) { nextBtn.disabled = false; nextBtn.textContent = 'Save Changes'; return; }
+        sessionStorage.setItem('ct_api_key', apiKey);
+      }
+
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+
+      // 1. PUT bot config
+      const botBody = {
+        mode: wizData.mode,
+        account: wizData.account,
+        strategy_tag: wizData.strategy_tag,
+        source_bot: wizData.mode === 'copy' ? wizData.source_bot : null,
+        entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : null,
+        manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : null,
+      };
+      const botResp = await fetch(`${BASE}/webhook/ai/bots/${encodeURIComponent(wizardEditBotId)}`, {
+        method: 'PUT', headers, body: JSON.stringify(botBody)
+      });
+      if (!botResp.ok) {
+        const err = await botResp.json().catch(() => ({}));
+        throw new Error(err.detail || `Bot update failed: ${botResp.status}`);
+      }
+
+      // 2. Set indicator selections
+      const indResp = await fetch(`${BASE}/webhook/ai/bots/${encodeURIComponent(wizardEditBotId)}/indicators`, {
+        method: 'POST', headers, body: JSON.stringify({ indicators: wizData.indicators })
+      });
+      if (!indResp.ok) {
+        const err = await indResp.json().catch(() => ({}));
+        throw new Error(err.detail || `Indicator save failed: ${indResp.status}`);
+      }
+
+      // 3. Refresh and close
+      await fetchBots();
+      closeWizard();
+      fetchAll();
+    } catch (e) {
+      alert('Error: ' + e.message);
+      if (e.message.includes('401') || e.message.includes('Invalid')) {
+        sessionStorage.removeItem('ct_api_key');
+      }
+    } finally {
+      nextBtn.disabled = false;
+      nextBtn.textContent = 'Save Changes';
+    }
+  }
+
+  async function deleteBot() {
+    if (!wizardEditBotId) return;
+    if (!confirm(`Delete bot "${wizardEditBotId}"? This cannot be undone.`)) return;
+
+    try {
+      let apiKey = sessionStorage.getItem('ct_api_key');
+      if (!apiKey) {
+        apiKey = prompt('Enter your API key (Bearer token):');
+        if (!apiKey) return;
+        sessionStorage.setItem('ct_api_key', apiKey);
+      }
+
+      const headers = { 'Authorization': `Bearer ${apiKey}` };
+      const resp = await fetch(`${BASE}/webhook/ai/bots/${encodeURIComponent(wizardEditBotId)}`, {
+        method: 'DELETE', headers
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `Delete failed: ${resp.status}`);
+      }
+
+      closeWizard();
+      el('filterBot').value = '';
+      el('editBotBtn').style.display = 'none';
+      await fetchBots();
+      fetchAll();
+    } catch (e) {
+      alert('Error: ' + e.message);
+      if (e.message.includes('401') || e.message.includes('Invalid')) {
+        sessionStorage.removeItem('ct_api_key');
+      }
     }
   }
 </script>
