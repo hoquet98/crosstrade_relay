@@ -188,7 +188,7 @@ class UtBotTrendStrategy(BaseStrategy):
             session_bucket = "morning"
         elif hhmm < 1330:
             session_bucket = "midday_chop"
-        elif hhmm < 1500:
+        elif hhmm < 1550:
             session_bucket = "afternoon"
         else:
             session_bucket = "close"

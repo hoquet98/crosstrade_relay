@@ -300,7 +300,7 @@ currentHour   = hour(time, aiSessionTZ)
 currentMinute = minute(time, aiSessionTZ)
 currentHHMM   = currentHour * 100 + currentMinute
 
-sessionBucket = currentHHMM < 1000 ? "open_drive" : currentHHMM < 1130 ? "morning" : currentHHMM < 1330 ? "midday_chop" : currentHHMM < 1500 ? "afternoon" : "close"
+sessionBucket = currentHHMM < 1000 ? "open_drive" : currentHHMM < 1130 ? "morning" : currentHHMM < 1330 ? "midday_chop" : currentHHMM < 1550 ? "afternoon" : "close"
 
 dow = dayofweek(time, aiSessionTZ)
 dowStr = dow == dayofweek.monday ? "Mon" : dow == dayofweek.tuesday ? "Tue" : dow == dayofweek.wednesday ? "Wed" : dow == dayofweek.thursday ? "Thu" : dow == dayofweek.friday ? "Fri" : dow == dayofweek.saturday ? "Sat" : "Sun"
