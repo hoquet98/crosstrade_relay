@@ -794,6 +794,26 @@ async def admin_delete_bars(request: Request, _user: dict = Depends(verify_beare
     return {"status": "ok", "deleted": len(ids)}
 
 
+@app.post("/admin/fix-bars")
+async def admin_fix_bars(request: Request, _user: dict = Depends(verify_bearer)):
+    """Fix bar fields by ID. Body: {"fixes": [{"id": 55, "low": 24373.5}, ...]}"""
+    data = await request.json()
+    fixes = data.get("fixes", [])
+    if not fixes:
+        raise HTTPException(status_code=400, detail="Missing 'fixes' list")
+    conn = db.get_connection()
+    for fix in fixes:
+        bar_id = fix.pop("id", None)
+        if not bar_id or not fix:
+            continue
+        sets = ", ".join(f"{k} = ?" for k in fix.keys())
+        vals = list(fix.values()) + [bar_id]
+        conn.execute(f"UPDATE ai_bars SET {sets} WHERE id = ?", vals)
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "fixed": len(fixes)}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DEPLOY
 # ══════════════════════════════════════════════════════════════════════════════
