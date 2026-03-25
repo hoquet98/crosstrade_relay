@@ -1366,7 +1366,7 @@ async def _call_anthropic(user_msg: str, system_prompt: str) -> tuple[str, str, 
                     decision = "HOLD"
                 elif "AGREE" in val and "DISAGREE" not in val:
                     decision = "AGREE"
-                elif "DISAGREE" in val:
+                elif "DISAGREE" in val or "REJECT" in val or "DENY" in val or "NO" == val:
                     decision = "DISAGREE"
             elif line.upper().startswith("REASON:"):
                 reason = line.split(":", 1)[1].strip()
