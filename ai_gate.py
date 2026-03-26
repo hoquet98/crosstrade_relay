@@ -1347,9 +1347,12 @@ async def _call_anthropic(user_msg: str, system_prompt: str,
     if not mcfg["api_key"]:
         return "ERROR", f"API key not set for {mcfg['model']}", 0, ""
 
+    # MiniMax uses thinking tokens — needs higher max_tokens
+    max_tokens = 1000 if "minimax" in mcfg["model"].lower() else 150
+
     request_body = {
         "model": mcfg["model"],
-        "max_tokens": 150,
+        "max_tokens": max_tokens,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_msg}]
     }
