@@ -14,6 +14,7 @@ from typing import Callable, Awaitable
 import httpx
 
 import database as db
+import indicator_engine
 
 logger = logging.getLogger("trade_relay")
 
@@ -1682,8 +1683,11 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
     async with _get_lock(lock_key):
         position = _get_position(relay_user, account, instrument)
 
+        # Enrich payload with server-computed indicators (fills missing fields)
+        enriched_payload = indicator_engine.enrich_payload(payload, instrument)
+
         # Filter payload to only include bot's enabled indicators
-        filtered_payload = _filter_payload_for_bot(payload, relay_id)
+        filtered_payload = _filter_payload_for_bot(enriched_payload, relay_id)
 
         if position is None:
             # === FLAT — check for entry signals ===
