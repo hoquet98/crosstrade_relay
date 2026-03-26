@@ -23,7 +23,7 @@ logger = logging.getLogger("trade_relay")
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
-ANTHROPIC_TIMEOUT = 15.0
+ANTHROPIC_TIMEOUT = 30.0
 
 # Model registry: model_id -> (api_key_env, base_url)
 AI_MODELS = {
