@@ -22,9 +22,30 @@ logger = logging.getLogger("trade_relay")
 # ══════════════════════════════════════════════════════════════════════════════
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 ANTHROPIC_TIMEOUT = 15.0
+
+# Model registry: model_id -> (api_key_env, base_url)
+AI_MODELS = {
+    "claude-sonnet-4-20250514": {
+        "label": "Claude Sonnet 4",
+        "base_url": "https://api.anthropic.com/v1/messages",
+        "key_env": "ANTHROPIC_API_KEY",
+    },
+    "MiniMax-M2.7": {
+        "label": "MiniMax M2.7",
+        "base_url": "https://api.minimax.io/anthropic/v1/messages",
+        "key_env": "MINIMAX_API_KEY",
+    },
+}
+DEFAULT_AI_MODEL = "MiniMax-M2.7"
+
+def _get_model_config(model_id: str) -> dict:
+    """Get API config for a model. Falls back to default."""
+    cfg = AI_MODELS.get(model_id, AI_MODELS[DEFAULT_AI_MODEL])
+    key_env = cfg["key_env"]
+    api_key = os.environ.get(key_env, "")
+    return {"base_url": cfg["base_url"], "api_key": api_key, "model": model_id}
 
 AI_DRY_RUN = os.environ.get("AI_DRY_RUN", "1").lower() not in ("0", "false", "no")
 
@@ -252,6 +273,8 @@ def init_db():
         conn.execute("ALTER TABLE ai_bots ADD COLUMN config_json TEXT")
     if "relay_user" not in bot_cols:
         conn.execute("ALTER TABLE ai_bots ADD COLUMN relay_user TEXT DEFAULT 'titon'")
+    if "ai_model" not in bot_cols:
+        conn.execute(f"ALTER TABLE ai_bots ADD COLUMN ai_model TEXT DEFAULT '{DEFAULT_AI_MODEL}'")
 
     # Strategy indicator registry
     conn.execute("""
@@ -660,14 +683,16 @@ def add_bot(bot_id: str, mode: str, account: str, strategy_tag: str,
             source_bot: str = None, relay_id: str = None,
             entry_prompt: str = None, manage_prompt: str = None,
             strategy_name: str = None, config_json: str = None,
-            relay_user: str = "titon"):
+            relay_user: str = "titon", ai_model: str = None):
     init_db()
+    if ai_model is None:
+        ai_model = DEFAULT_AI_MODEL
     conn = db.get_connection()
     conn.execute("""
         INSERT INTO ai_bots (bot_id, mode, source_bot, relay_id, account,
                              strategy_tag, entry_prompt, manage_prompt,
-                             strategy_name, config_json, relay_user)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             strategy_name, config_json, relay_user, ai_model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(bot_id) DO UPDATE SET
             mode = excluded.mode, source_bot = excluded.source_bot,
             relay_id = excluded.relay_id, account = excluded.account,
@@ -676,9 +701,10 @@ def add_bot(bot_id: str, mode: str, account: str, strategy_tag: str,
             manage_prompt = excluded.manage_prompt,
             strategy_name = excluded.strategy_name,
             config_json = excluded.config_json,
-            relay_user = excluded.relay_user
+            relay_user = excluded.relay_user,
+            ai_model = excluded.ai_model
     """, (bot_id, mode, source_bot, relay_id, account, strategy_tag,
-          entry_prompt, manage_prompt, strategy_name, config_json, relay_user))
+          entry_prompt, manage_prompt, strategy_name, config_json, relay_user, ai_model))
     conn.commit()
     conn.close()
 
@@ -711,7 +737,7 @@ def update_bot(bot_id: str, **kwargs):
     """Update specific fields on a bot config."""
     init_db()
     allowed = {'mode', 'source_bot', 'relay_id', 'account', 'strategy_tag',
-               'entry_prompt', 'manage_prompt', 'enabled'}
+               'entry_prompt', 'manage_prompt', 'enabled', 'ai_model'}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return
@@ -1314,13 +1340,15 @@ async def sync_after_exit(relay_user: str, account: str, instrument: str):
 # ANTHROPIC API
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _call_anthropic(user_msg: str, system_prompt: str) -> tuple[str, str, int, str]:
-    """Call Anthropic API. Returns: (decision, reason, latency_ms, raw_response)"""
-    if not ANTHROPIC_API_KEY:
-        return "ERROR", "ANTHROPIC_API_KEY not set", 0, ""
+async def _call_anthropic(user_msg: str, system_prompt: str,
+                         model_id: str = None) -> tuple[str, str, int, str]:
+    """Call AI API. Returns: (decision, reason, latency_ms, raw_response)"""
+    mcfg = _get_model_config(model_id or DEFAULT_AI_MODEL)
+    if not mcfg["api_key"]:
+        return "ERROR", f"API key not set for {mcfg['model']}", 0, ""
 
     request_body = {
-        "model": ANTHROPIC_MODEL,
+        "model": mcfg["model"],
         "max_tokens": 150,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_msg}]
@@ -1331,10 +1359,10 @@ async def _call_anthropic(user_msg: str, system_prompt: str) -> tuple[str, str, 
     try:
         async with httpx.AsyncClient(timeout=ANTHROPIC_TIMEOUT) as client:
             resp = await client.post(
-                ANTHROPIC_URL,
+                mcfg["base_url"],
                 json=request_body,
                 headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
+                    "x-api-key": mcfg["api_key"],
                     "anthropic-version": "2023-06-01",
                     "content-type": "application/json"
                 }
@@ -1615,13 +1643,15 @@ async def process_bar(payload: dict, body_text: str):
         await _process_bar_for_bot(
             bot_payload, bot_body,
             entry_prompt=bot.get("entry_prompt"),
-            manage_prompt=bot.get("manage_prompt")
+            manage_prompt=bot.get("manage_prompt"),
+            ai_model=bot.get("ai_model")
         )
 
 
 async def _process_bar_for_bot(payload: dict, body_text: str,
                                 entry_prompt: str = None,
-                                manage_prompt: str = None):
+                                manage_prompt: str = None,
+                                ai_model: str = None):
     """Process a single bar for one bot (source or copy)."""
     relay_user = payload.get("relay_user", "")
     relay_id = payload.get("relay_id", "")
@@ -1639,6 +1669,10 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
                 strategy_tag=payload.get('strategy_tag', relay_id),
                 relay_id=relay_id)
         logger.info(f"[{relay_user}/{relay_id}] Auto-created bot config (mode=normal)")
+        bot = get_bot(relay_id)
+
+    # Resolve model: explicit param > bot config > default
+    model = ai_model or (bot.get("ai_model") if bot else None) or DEFAULT_AI_MODEL
 
     # Serialize per bot+instrument to prevent race conditions
     lock_key = f"{relay_user}:{relay_id}:{account}:{instrument}"
@@ -1656,12 +1690,12 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
             if long_sig or short_sig:
                 direction = "long" if long_sig else "short"
                 await _handle_entry(filtered_payload, body_text, direction,
-                                    entry_prompt=entry_prompt)
+                                    entry_prompt=entry_prompt, ai_model=model)
             # else: flat, no signal — nothing to do
         else:
             # === IN POSITION — manage ===
             await _handle_manage(filtered_payload, body_text, position,
-                                 manage_prompt=manage_prompt)
+                                 manage_prompt=manage_prompt, ai_model=model)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1669,7 +1703,7 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _handle_entry(payload: dict, body_text: str, direction: str,
-                        entry_prompt: str = None):
+                        entry_prompt: str = None, ai_model: str = None):
     """Flat + signal detected. Ask AI whether to enter."""
     relay_user = payload["relay_user"]
     relay_id = payload["relay_id"]
@@ -1678,13 +1712,13 @@ async def _handle_entry(payload: dict, body_text: str, direction: str,
     strategy = payload.get("strategy", "unknown")
     confluence = payload.get("bull_confluence" if direction == "long" else "bear_confluence", 0)
 
-    logger.info(f"[{relay_user}/{relay_id}] Signal: {direction.upper()} {instrument} (confluence {confluence})")
+    logger.info(f"[{relay_user}/{relay_id}] Signal: {direction.upper()} {instrument} (confluence {confluence}) [model={ai_model}]")
 
     # Call AI for entry decision (use custom prompt if provided)
     user_msg = _build_entry_message(payload)
     prompt = entry_prompt or AI_ENTRY_PROMPT
     ai_decision, ai_reason, ai_latency_ms, ai_raw = await _call_anthropic(
-        user_msg, prompt
+        user_msg, prompt, model_id=ai_model
     )
 
     logger.info(f"[{relay_user}/{relay_id}] AI: {ai_decision} ({ai_latency_ms}ms) — {ai_reason}")
@@ -1753,7 +1787,7 @@ async def _handle_entry(payload: dict, body_text: str, direction: str,
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _handle_manage(payload: dict, body_text: str, position: dict,
-                         manage_prompt: str = None):
+                         manage_prompt: str = None, ai_model: str = None):
     """In position. Compute P&L, exit score, check safety nets, maybe call AI."""
     relay_user = position["relay_user"]
     relay_id = position["relay_id"]
@@ -1860,11 +1894,11 @@ async def _handle_manage(payload: dict, body_text: str, position: dict,
                                      ticks_pnl, dollar_pnl, bar_count)
     prompt = manage_prompt or AI_MANAGE_PROMPT
     ai_decision, ai_reason, ai_latency_ms, ai_raw = await _call_anthropic(
-        user_msg, prompt
+        user_msg, prompt, model_id=ai_model
     )
 
     logger.info(
-        f"[{relay_user}/{relay_id}] AI manage: {ai_decision} ({ai_latency_ms}ms) — {ai_reason}"
+        f"[{relay_user}/{relay_id}] AI manage: {ai_decision} ({ai_latency_ms}ms) [{ai_model}] — {ai_reason}"
     )
 
     relay_result = None

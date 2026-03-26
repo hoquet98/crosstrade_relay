@@ -412,8 +412,9 @@ async def health():
     return {
         "status": "ok",
         "ai_gate": "dry_run" if ai_gate.AI_DRY_RUN else "live",
-        "ai_model": ai_gate.ANTHROPIC_MODEL,
-        "api_key_set": bool(ai_gate.ANTHROPIC_API_KEY)
+        "default_model": ai_gate.DEFAULT_AI_MODEL,
+        "anthropic_key_set": bool(ai_gate.ANTHROPIC_API_KEY),
+        "minimax_key_set": bool(ai_gate.MINIMAX_API_KEY)
     }
 
 @app.get("/positions")
@@ -675,6 +676,12 @@ async def ai_trade_stats_endpoint(relay_user: str = None, relay_id: str = None):
 # BOT MANAGEMENT
 # ══════════════════════════════════════════════════════════════════════════════
 
+@app.get("/webhook/ai/models")
+async def ai_models_list():
+    """List available AI models."""
+    return [{"id": k, "label": v["label"]} for k, v in ai_gate.AI_MODELS.items()]
+
+
 @app.get("/webhook/ai/bots")
 async def ai_bots_list():
     return ai_gate.list_bots()
@@ -698,6 +705,7 @@ async def ai_bots_create(request: Request, _user: dict = Depends(verify_bearer))
         entry_prompt=data.get("entry_prompt"), manage_prompt=data.get("manage_prompt"),
         strategy_name=data.get("strategy_name"), config_json=data.get("config_json"),
         relay_user=data.get("relay_user", "titon"),
+        ai_model=data.get("ai_model"),
     )
     return {"status": "ok", "bot_id": data["bot_id"]}
 

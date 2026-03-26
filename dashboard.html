@@ -1052,8 +1052,9 @@
   // ══════════════════════════════════════════════════════════════════════════
 
   let wizStep = 1;
-  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', indicators: {}, entry_prompt: '', manage_prompt: '' };
+  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', indicators: {}, entry_prompt: '', manage_prompt: '' };
   let wizIndicators = []; // fetched from API
+  let availableModels = [];
   let wizardEditMode = false;
   let wizardEditBotId = null;
 
@@ -1136,12 +1137,14 @@ or
 DECISION: HOLD
 REASON: [one concise sentence]`;
 
-  function openWizard() {
+  async function openWizard() {
     wizStep = 1;
     wizardEditMode = false;
     wizardEditBotId = null;
-    wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', indicators: {}, entry_prompt: DEFAULT_ENTRY_PROMPT, manage_prompt: DEFAULT_MANAGE_PROMPT };
+    wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', indicators: {}, entry_prompt: DEFAULT_ENTRY_PROMPT, manage_prompt: DEFAULT_MANAGE_PROMPT };
     wizIndicators = [];
+    // Fetch available models
+    try { availableModels = await (await fetch(`${BASE}/webhook/ai/models`)).json(); } catch(e) { availableModels = []; }
     el('wizardTitle').textContent = 'Create New Bot';
     el('wizDelete').style.display = 'none';
     el('wizardOverlay').classList.add('active');
@@ -1166,12 +1169,13 @@ REASON: [one concise sentence]`;
     const bot = bots.find(b => b.bot_id === botId);
     if (!bot) { alert('Bot not found'); return; }
 
-    // Fetch bot indicators
+    // Fetch bot indicators and models
     let indicators = {};
     try {
       const resp = await fetch(`${BASE}/webhook/ai/bots/${encodeURIComponent(botId)}/indicators`);
       if (resp.ok) indicators = await resp.json();
     } catch (e) {}
+    try { availableModels = await (await fetch(`${BASE}/webhook/ai/models`)).json(); } catch(e) { availableModels = []; }
 
     wizData = {
       bot_id: bot.bot_id,
@@ -1179,6 +1183,7 @@ REASON: [one concise sentence]`;
       source_bot: bot.source_bot || '',
       account: bot.account || '',
       strategy_tag: bot.strategy_tag || 'AIGate',
+      ai_model: bot.ai_model || '',
       indicators: indicators,
       entry_prompt: bot.entry_prompt || DEFAULT_ENTRY_PROMPT,
       manage_prompt: bot.manage_prompt || DEFAULT_MANAGE_PROMPT,
@@ -1266,6 +1271,14 @@ REASON: [one concise sentence]`;
           <input type="text" id="wizStrategyTag" value="${wizData.strategy_tag}" placeholder="e.g. AIGate">
         </div>
       </div>
+      <div class="wiz-row">
+        <div class="wiz-field">
+          <label>AI Model</label>
+          <select id="wizAiModel">
+            ${availableModels.map(m => `<option value="${m.id}" ${wizData.ai_model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}
+          </select>
+        </div>
+      </div>
     `;
 
     el('wizMode').addEventListener('change', function() {
@@ -1279,6 +1292,7 @@ REASON: [one concise sentence]`;
     wizData.source_bot = el('wizSourceBot')?.value || '';
     wizData.account = (el('wizAccount')?.value || '').trim();
     wizData.strategy_tag = (el('wizStrategyTag')?.value || 'AIGate').trim();
+    wizData.ai_model = el('wizAiModel')?.value || '';
   }
 
   async function renderStep2(body) {
@@ -1465,6 +1479,7 @@ REASON: [one concise sentence]`;
         mode: wizData.mode,
         account: wizData.account,
         strategy_tag: wizData.strategy_tag,
+        ai_model: wizData.ai_model || undefined,
         source_bot: wizData.mode === 'copy' ? wizData.source_bot : undefined,
         entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : undefined,
         manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : undefined,
@@ -1521,6 +1536,7 @@ REASON: [one concise sentence]`;
         mode: wizData.mode,
         account: wizData.account,
         strategy_tag: wizData.strategy_tag,
+        ai_model: wizData.ai_model || null,
         source_bot: wizData.mode === 'copy' ? wizData.source_bot : null,
         entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : null,
         manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : null,
