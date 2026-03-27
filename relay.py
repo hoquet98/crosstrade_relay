@@ -606,14 +606,15 @@ async def nt_tables(request: Request, db_param: str = None):
 
 @app.post("/webhook/ai")
 async def webhook_ai(request: Request):
-    """AI Gate webhook — receives bar data JSON from Pine Script v2.0.0.
+    """AI Gate webhook — receives bar data from Pine Script or TV strategy alerts.
+    Supports JSON and semicolon-delimited key=value formats.
     Returns 200 immediately; processing happens in the background.
-    Server decides: enter, hold, exit, or skip.
     """
     body = await request.body()
     body_text = body.decode("utf-8").strip()
 
     if not body_text:
+        logger.warning("AI webhook: empty payload received")
         raise HTTPException(status_code=400, detail="Empty payload")
 
     try:
@@ -622,16 +623,32 @@ async def webhook_ai(request: Request):
         # Fall back to semicolon-delimited key=value format (standard TV strategy alerts)
         payload = parse_payload(body_text)
 
+    logger.info(f"AI webhook received: {list(payload.keys())} -> {body_text[:200]}")
+
+    # Fill missing fields from bot config (TV strategy alerts are minimal)
+    relay_id = payload.get("relay_id", "")
+    if relay_id:
+        bot = ai_gate.get_bot(relay_id)
+        if bot:
+            if "account" not in payload and bot.get("account"):
+                payload["account"] = bot["account"]
+            if "strategy_tag" not in payload and bot.get("strategy_tag"):
+                payload["strategy_tag"] = bot["strategy_tag"]
+            if "strategy_type" not in payload:
+                payload["strategy_type"] = "scalp"
+
     missing = ai_gate.REQUIRED_BAR_FIELDS - set(payload.keys())
     if missing:
+        logger.warning(f"AI webhook: missing fields {missing} in payload: {body_text[:200]}")
         raise HTTPException(status_code=400, detail=f"Missing fields: {', '.join(missing)}")
 
     relay_user = payload.get("relay_user", "")
     user = db.get_user(relay_user)
     if not user:
+        logger.warning(f"AI webhook: unknown relay_user '{relay_user}'")
         raise HTTPException(status_code=400, detail=f"Unknown relay_user: {relay_user}")
 
-    asyncio.create_task(ai_gate.process_bar(payload, body_text))
+    asyncio.create_task(ai_gate.process_bar(payload, json.dumps(payload)))
     return JSONResponse(content={"status": "received"})
 
 
