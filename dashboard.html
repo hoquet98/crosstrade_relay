@@ -619,16 +619,7 @@
         opt.textContent = `${b.bot_id} (${b.mode})`;
         sel.appendChild(opt);
       });
-      // Add relay_ids from logs that aren't configured bots
-      logs.forEach(l => {
-        if (l.relay_id && !seen.has(l.relay_id)) {
-          seen.add(l.relay_id);
-          const opt = document.createElement('option');
-          opt.value = l.relay_id;
-          opt.textContent = l.relay_id;
-          sel.appendChild(opt);
-        }
-      });
+      // Only show configured bots in dropdown (not stale relay_ids from old logs)
       sel.value = current;
     } catch (e) {}
   }
