@@ -822,6 +822,29 @@ async def admin_fix_bars(request: Request, _user: dict = Depends(verify_bearer))
     return {"status": "ok", "fixed": len(fixes)}
 
 
+@app.post("/admin/clear-data")
+async def admin_clear_data(request: Request, _user: dict = Depends(verify_bearer)):
+    """Clear logs, trades, and positions. Body: {"relay_id": "x"} or {"all": true}"""
+    data = await request.json()
+    conn = db.get_connection()
+    relay_id = data.get("relay_id")
+    if data.get("all"):
+        conn.execute("DELETE FROM ai_gate_logs")
+        conn.execute("DELETE FROM ai_trades")
+        conn.execute("DELETE FROM ai_positions")
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "cleared": "all"}
+    elif relay_id:
+        conn.execute("DELETE FROM ai_gate_logs WHERE relay_id = ?", (relay_id,))
+        conn.execute("DELETE FROM ai_trades WHERE relay_id = ?", (relay_id,))
+        conn.execute("DELETE FROM ai_positions WHERE relay_id = ?", (relay_id,))
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "cleared": relay_id}
+    raise HTTPException(status_code=400, detail="Provide 'relay_id' or 'all': true")
+
+
 @app.get("/admin/logs")
 async def admin_logs(lines: int = 100, _user: dict = Depends(verify_bearer)):
     """Return the last N lines from trade_relay.log."""
