@@ -1694,8 +1694,21 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
 
         if position is None:
             # === FLAT — check for entry signals ===
+            # Support both formats:
+            #   Pine Script: long_signal=true / short_signal=true
+            #   TV Strategy: action=buy / action=sell
             long_sig = filtered_payload.get("long_signal", False)
             short_sig = filtered_payload.get("short_signal", False)
+
+            # Translate action=buy/sell to signal flags
+            action = str(filtered_payload.get("action", "")).lower()
+            if not long_sig and not short_sig and action:
+                if action == "buy":
+                    long_sig = True
+                    filtered_payload["long_signal"] = True
+                elif action == "sell":
+                    short_sig = True
+                    filtered_payload["short_signal"] = True
 
             if long_sig or short_sig:
                 direction = "long" if long_sig else "short"
