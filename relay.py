@@ -822,6 +822,18 @@ async def admin_fix_bars(request: Request, _user: dict = Depends(verify_bearer))
     return {"status": "ok", "fixed": len(fixes)}
 
 
+@app.get("/admin/logs")
+async def admin_logs(lines: int = 100, _user: dict = Depends(verify_bearer)):
+    """Return the last N lines from trade_relay.log."""
+    import os
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_relay.log")
+    if not os.path.exists(log_path):
+        return {"lines": []}
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        all_lines = f.readlines()
+    return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DEPLOY
 # ══════════════════════════════════════════════════════════════════════════════
