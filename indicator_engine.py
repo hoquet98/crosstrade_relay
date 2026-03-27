@@ -29,14 +29,36 @@ MIN_BARS_5M = 50
 # BAR LOADING
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _extract_root(instrument: str) -> str:
+    """Extract root symbol: 'MNQ1!' -> 'MNQ', 'MNQ JUN26' -> 'MNQ'"""
+    root = ""
+    for ch in instrument.upper():
+        if ch.isalpha():
+            root += ch
+        else:
+            break
+    return root
+
+
 def _load_bars(instrument: str, limit: int = 300) -> pd.DataFrame:
-    """Load recent 1-min bars from ai_bars into a pandas DataFrame."""
+    """Load recent 1-min bars from ai_bars into a pandas DataFrame.
+
+    Matches by root symbol so 'MNQ1!' finds bars stored as 'MNQ JUN26'.
+    """
+    root = _extract_root(instrument)
     conn = db.get_connection()
+    # Find the actual instrument name in the DB matching this root
+    row = conn.execute(
+        "SELECT DISTINCT instrument FROM ai_bars WHERE instrument LIKE ? LIMIT 1",
+        (f"{root}%",)
+    ).fetchone()
+    db_instrument = row["instrument"] if row else instrument
+
     rows = conn.execute(
         """SELECT timestamp, open, high, low, close, volume
            FROM ai_bars WHERE instrument = ?
            ORDER BY timestamp DESC LIMIT ?""",
-        (instrument, limit)
+        (db_instrument, limit)
     ).fetchall()
     conn.close()
 
