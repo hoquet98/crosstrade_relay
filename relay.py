@@ -618,8 +618,9 @@ async def webhook_ai(request: Request):
 
     try:
         payload = json.loads(body_text)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+    except (json.JSONDecodeError, ValueError):
+        # Fall back to semicolon-delimited key=value format (standard TV strategy alerts)
+        payload = parse_payload(body_text)
 
     missing = ai_gate.REQUIRED_BAR_FIELDS - set(payload.keys())
     if missing:
