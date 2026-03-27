@@ -751,11 +751,14 @@ def update_bot(bot_id: str, **kwargs):
 
 
 def delete_bot(bot_id: str):
-    """Delete a bot and its indicator selections."""
+    """Delete a bot, its indicator selections, and all associated trade data."""
     init_db()
     conn = db.get_connection()
     conn.execute("DELETE FROM ai_bots WHERE bot_id = ?", (bot_id,))
     conn.execute("DELETE FROM ai_bot_indicators WHERE bot_id = ?", (bot_id,))
+    conn.execute("DELETE FROM ai_gate_logs WHERE relay_id = ?", (bot_id,))
+    conn.execute("DELETE FROM ai_trades WHERE relay_id = ?", (bot_id,))
+    conn.execute("DELETE FROM ai_positions WHERE relay_id = ?", (bot_id,))
     conn.commit()
     conn.close()
 
