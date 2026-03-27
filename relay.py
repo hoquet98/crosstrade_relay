@@ -648,7 +648,13 @@ async def webhook_ai(request: Request):
         logger.warning(f"AI webhook: unknown relay_user '{relay_user}'")
         raise HTTPException(status_code=400, detail=f"Unknown relay_user: {relay_user}")
 
-    asyncio.create_task(ai_gate.process_bar(payload, json.dumps(payload)))
+    async def _safe_process():
+        try:
+            await ai_gate.process_bar(payload, json.dumps(payload))
+        except Exception as e:
+            logger.error(f"AI process_bar CRASHED: {type(e).__name__}: {e}", exc_info=True)
+
+    asyncio.create_task(_safe_process())
     return JSONResponse(content={"status": "received"})
 
 
