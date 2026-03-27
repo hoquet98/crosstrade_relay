@@ -331,12 +331,23 @@ def get_bars_as_dataframe(instrument: str, limit: int = 300) -> Optional[pd.Data
     return df
 
 
-async def run_python_bots():
+async def run_python_bots(instrument_hint: str = None):
     """Run all enabled Python-mode bots against latest bar data.
 
     Called by CVD on each 1-min bar close.
+
+    Args:
+        instrument_hint: Optional instrument name from the bar that just closed
+                         (e.g., "MNQ1!", "GC JUN26"). Used for bar lookup.
     """
     import ai_gate
+    import json as _json
+
+    # Lazy-load VBT adapter strategies (registers them in STRATEGY_REGISTRY)
+    try:
+        import vbt_adapter  # noqa: F401 — triggers auto_discover_vbt_strategies()
+    except ImportError:
+        pass
 
     conn = db.get_connection()
     bots = conn.execute("""
@@ -351,62 +362,84 @@ async def run_python_bots():
         try:
             bot_id = bot["bot_id"]
             strategy_name = bot.get("strategy_name") or bot.get("source_bot") or "ut_bot_trend"
-            instrument = "MNQ1!"  # default for now
             account = bot["account"]
             strategy_tag = bot["strategy_tag"]
-
-            # Get strategy class
-            strategy_cls = STRATEGY_REGISTRY.get(strategy_name)
-            if not strategy_cls:
-                logger.warning(f"Bot {bot_id}: strategy '{strategy_name}' not found in registry")
-                continue
-
-            strategy = strategy_cls()
-
-            # Load bar data — use NT8 instrument format for bar storage
-            # Try common formats
-            df = None
-            for inst_name in ["MNQ JUN26", "MNQ 06-26", "MNQ1!"]:
-                df = get_bars_as_dataframe(inst_name, limit=300)
-                if df is not None and len(df) >= 50:
-                    break
-
-            if df is None or len(df) < 50:
-                logger.debug(f"Bot {bot_id}: not enough bar data yet ({len(df) if df is not None else 0} bars)")
-                continue
 
             # Parse strategy params from bot config
             params = {}
             if bot.get("config_json"):
-                import json
                 try:
-                    params = json.loads(bot["config_json"])
-                except:
+                    params = _json.loads(bot["config_json"])
+                except Exception:
                     pass
 
-            # Run strategy
-            signal = strategy.generate_signals(df, params)
+            # Determine instrument — from config, hint, or default
+            instrument = params.get("instrument") or instrument_hint or "MNQ1!"
 
-            # Build payload matching Pine Script webhook format
+            # Determine instrument spec for tick_value
+            root = ""
+            for ch in instrument.upper():
+                if ch.isalpha():
+                    root += ch
+                else:
+                    break
+            spec = ai_gate.get_instrument_spec(instrument)
+            tick_value = spec["point_value"] * spec["tick_size"]
+
+            # Get strategy (class instance or VBTStrategyAdapter)
+            strategy_obj = STRATEGY_REGISTRY.get(strategy_name)
+            if not strategy_obj:
+                logger.warning(f"Bot {bot_id}: strategy '{strategy_name}' not found in registry")
+                continue
+
+            # If it's a class (not an instance), instantiate it
+            if isinstance(strategy_obj, type):
+                strategy_obj = strategy_obj()
+
+            # Load bar data — try multiple instrument name formats
+            # NT8 formats vary: "MNQ JUN26", "MNQ 06-26", "MNQ1!", root symbol
+            df = None
+            bar_limit = params.get("bar_limit", 500)
+            instrument_variants = [instrument]
+            if instrument not in [root, f"{root}1!"]:
+                instrument_variants.extend([f"{root}1!", root])
+
+            for inst_name in instrument_variants:
+                df = get_bars_as_dataframe(inst_name, limit=bar_limit)
+                if df is not None and len(df) >= 50:
+                    break
+
+            if df is None or len(df) < 50:
+                logger.debug(f"Bot {bot_id}: not enough bar data yet "
+                             f"({len(df) if df is not None else 0} bars)")
+                continue
+
+            # Run strategy
+            signal = strategy_obj.generate_signals(df, params)
+
+            # Build payload matching AI Gate's expected format
             payload = {
                 "relay_user": bot.get("relay_user", "titon"),
                 "relay_id": bot_id,
                 "account": account,
-                "qty": 1,
+                "qty": params.get("qty", 1),
                 "strategy_tag": strategy_tag or "PyBot",
                 "strategy": strategy_name,
-                "strategy_type": "scalp",
+                "strategy_type": params.get("strategy_type", "scalp"),
                 "instrument": instrument,
-                "timeframe": "1",
-                "target_ticks": params.get("target_ticks", 50),
-                "stop_ticks": params.get("stop_ticks", 30),
-                "hard_stop_ticks": params.get("hard_stop_ticks", 100),
+                "timeframe": params.get("timeframe", "1"),
+                "target_ticks": params.get("target_ticks",
+                                           params.get("l_target_ticks", 50)),
+                "stop_ticks": params.get("stop_ticks",
+                                         params.get("l_stop_ticks", 30)),
+                "hard_stop_ticks": params.get("hard_stop_ticks", 200),
                 "rr": 1.67,
-                "tick_value": 2,
+                "tick_value": tick_value,
             }
+            # Merge strategy signals + indicators into payload
             payload.update(signal)
 
-            # Feed through AI Gate
+            # Feed through AI Gate (full LLM entry/manage pipeline)
             await ai_gate.process_bar(payload)
 
         except Exception as e:
