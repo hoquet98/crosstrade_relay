@@ -68,8 +68,41 @@ def init_db():
     if "forwarded_payload" not in columns:
         cursor.execute("ALTER TABLE logs ADD COLUMN forwarded_payload TEXT")
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
     conn.close()
+
+
+# --- Settings operations ---
+
+def get_setting(key: str, default: str = "") -> str:
+    conn = get_connection()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_settings() -> dict:
+    conn = get_connection()
+    rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    conn.close()
+    return {r["key"]: r["value"] for r in rows}
 
 
 # --- User operations ---

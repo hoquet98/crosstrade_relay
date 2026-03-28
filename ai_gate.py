@@ -22,8 +22,18 @@ logger = logging.getLogger("trade_relay")
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
+def _get_api_key(env_name: str, setting_name: str) -> str:
+    """Get API key from DB settings first, fall back to env var."""
+    try:
+        val = db.get_setting(setting_name)
+        if val:
+            return val
+    except Exception:
+        pass
+    return os.environ.get(env_name, "")
+
+ANTHROPIC_API_KEY = ""  # resolved dynamically via _get_api_key
+MINIMAX_API_KEY = ""    # resolved dynamically via _get_api_key
 ANTHROPIC_TIMEOUT = 30.0
 
 # Model registry: model_id -> (api_key_env, base_url)
@@ -32,11 +42,13 @@ AI_MODELS = {
         "label": "Claude Sonnet 4",
         "base_url": "https://api.anthropic.com/v1/messages",
         "key_env": "ANTHROPIC_API_KEY",
+        "setting_key": "anthropic_api_key",
     },
     "MiniMax-M2.7": {
         "label": "MiniMax M2.7",
         "base_url": "https://api.minimax.io/anthropic/v1/messages",
         "key_env": "MINIMAX_API_KEY",
+        "setting_key": "minimax_api_key",
     },
 }
 DEFAULT_AI_MODEL = "MiniMax-M2.7"
@@ -45,7 +57,8 @@ def _get_model_config(model_id: str) -> dict:
     """Get API config for a model. Falls back to default."""
     cfg = AI_MODELS.get(model_id, AI_MODELS[DEFAULT_AI_MODEL])
     key_env = cfg["key_env"]
-    api_key = os.environ.get(key_env, "")
+    setting_name = cfg.get("setting_key", key_env.lower())
+    api_key = _get_api_key(key_env, setting_name)
     return {"base_url": cfg["base_url"], "api_key": api_key, "model": model_id}
 
 AI_DRY_RUN = os.environ.get("AI_DRY_RUN", "1").lower() not in ("0", "false", "no")

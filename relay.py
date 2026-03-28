@@ -869,6 +869,61 @@ async def admin_clear_data(request: Request, _user: dict = Depends(verify_bearer
     raise HTTPException(status_code=400, detail="Provide 'relay_id' or 'all': true")
 
 
+@app.get("/admin/settings")
+async def admin_settings_get(_user: dict = Depends(verify_bearer)):
+    """Get all settings including user profile and API keys (masked)."""
+    relay_user = _user.get("relay_user", "")
+    user = db.get_user(relay_user) or {}
+    settings = db.get_all_settings()
+
+    # Mask sensitive values — show last 4 chars only
+    def mask(val):
+        if not val or len(val) < 8:
+            return "****" if val else ""
+        return "****" + val[-4:]
+
+    return {
+        "relay_user": relay_user,
+        "crosstrade_key": mask(user.get("crosstrade_key", "")),
+        "ct_webhook_url": user.get("ct_webhook_url", ""),
+        "nt_query_token": mask(user.get("nt_query_token", "")),
+        "anthropic_api_key": mask(settings.get("anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")),
+        "minimax_api_key": mask(settings.get("minimax_api_key", "") or os.environ.get("MINIMAX_API_KEY", "")),
+    }
+
+
+@app.put("/admin/settings")
+async def admin_settings_update(request: Request, _user: dict = Depends(verify_bearer)):
+    """Update settings. Only non-empty fields are updated."""
+    data = await request.json()
+    relay_user = _user.get("relay_user", "")
+
+    # Update user fields
+    user = db.get_user(relay_user)
+    if user:
+        ct_key = data.get("crosstrade_key")
+        ct_url = data.get("ct_webhook_url")
+        nt_token = data.get("nt_query_token")
+        conn = db.get_connection()
+        if ct_key and not ct_key.startswith("****"):
+            conn.execute("UPDATE users SET crosstrade_key = ? WHERE relay_user = ?", (ct_key, relay_user))
+        if ct_url:
+            conn.execute("UPDATE users SET ct_webhook_url = ? WHERE relay_user = ?", (ct_url, relay_user))
+        if nt_token and not nt_token.startswith("****"):
+            conn.execute("UPDATE users SET nt_query_token = ? WHERE relay_user = ?", (nt_token, relay_user))
+        conn.commit()
+        conn.close()
+
+    # Update API keys in settings table
+    for key in ("anthropic_api_key", "minimax_api_key"):
+        val = data.get(key, "")
+        if val and not val.startswith("****"):
+            db.set_setting(key, val)
+
+    logger.info(f"Settings updated by {relay_user}")
+    return {"status": "ok"}
+
+
 @app.get("/admin/logs")
 async def admin_logs(lines: int = 100, _user: dict = Depends(verify_bearer)):
     """Return the last N lines from trade_relay.log."""
