@@ -1388,9 +1388,16 @@ REASON: [one concise sentence]`;
         </div>
       </div>
       <div id="wizTVAlert" style="display:${wizData.mode === 'normal' ? 'block' : 'none'}; margin-top:16px; padding:14px; background:#111; border:1px solid var(--border); border-radius:8px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <label style="color:var(--text-dim); font-size:12px;">TradingView Alert Message (copy this into your TV alert)</label>
-          <button onclick="navigator.clipboard.writeText(el('wizTVAlertText').textContent).then(()=>this.textContent='Copied!').catch(()=>{}); setTimeout(()=>this.textContent='Copy',1500);" style="padding:4px 10px; background:var(--accent); border:none; color:#fff; border-radius:4px; cursor:pointer; font-size:11px;">Copy</button>
+        <div style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <label style="color:var(--text-dim); font-size:12px;">Webhook URL</label>
+            <button onclick="navigator.clipboard.writeText('${window.location.origin}/webhook/ai').then(()=>this.textContent='Copied!').catch(()=>{}); setTimeout(()=>this.textContent='Copy',1500);" style="padding:3px 8px; background:var(--accent); border:none; color:#fff; border-radius:4px; cursor:pointer; font-size:11px;">Copy</button>
+          </div>
+          <pre style="color:#4fc3f7; font-size:13px; margin:0; font-family:monospace;">${window.location.origin}/webhook/ai</pre>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <label style="color:var(--text-dim); font-size:12px;">Alert Message</label>
+          <button onclick="navigator.clipboard.writeText(el('wizTVAlertText').textContent).then(()=>this.textContent='Copied!').catch(()=>{}); setTimeout(()=>this.textContent='Copy',1500);" style="padding:3px 8px; background:var(--accent); border:none; color:#fff; border-radius:4px; cursor:pointer; font-size:11px;">Copy</button>
         </div>
         <pre id="wizTVAlertText" style="color:#0f0; font-size:13px; margin:0; white-space:pre-wrap; font-family:monospace;"></pre>
       </div>
