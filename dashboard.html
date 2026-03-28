@@ -395,6 +395,7 @@
     </div>
     <div class="header-right">
       <div class="live-dot" id="liveStatus">Polling every <span id="intervalDisplay">5</span>s</div>
+      <div id="marketCountdown" style="padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap;"></div>
       <div class="mode-badge mode-dry-run" id="modeBadge">DRY RUN</div>
       <button onclick="openSettings()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:14px;" title="Settings">&#9881; Settings</button>
     </div>
@@ -857,6 +858,72 @@
 
   fetchAll();
   startPolling();
+
+  // --- Market Countdown ---
+  function updateMarketCountdown() {
+    const el_cd = el('marketCountdown');
+    const now = new Date();
+    // Convert to ET
+    const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' });
+    const et = new Date(etStr);
+    const day = et.getDay(); // 0=Sun, 1=Mon...6=Sat
+    const h = et.getHours();
+    const m = et.getMinutes();
+    const hhmm = h * 100 + m;
+
+    // CME Futures schedule (ET):
+    // Sun 6pm - Fri 5pm, with daily maintenance 5pm-6pm ET
+    const isWeekend = (day === 6) || (day === 0 && hhmm < 1800) || (day === 5 && hhmm >= 1700);
+    const isMaintenance = hhmm >= 1700 && hhmm < 1800 && day >= 1 && day <= 5;
+    const isOpen = !isWeekend && !isMaintenance;
+
+    if (isOpen) {
+      // Calculate time until close (5pm ET today, or Friday 5pm)
+      let closeH = 17, closeM = 0;
+      let minsLeft = (closeH * 60 + closeM) - (h * 60 + m);
+      if (minsLeft < 0) minsLeft = 0;
+      const hrs = Math.floor(minsLeft / 60);
+      const mins = minsLeft % 60;
+      el_cd.style.background = '#0a3d0a';
+      el_cd.style.color = '#00e676';
+      el_cd.style.border = '1px solid #00e676';
+      el_cd.textContent = `OPEN — closes in ${hrs}h ${mins}m`;
+    } else {
+      // Calculate next open
+      let target = new Date(et);
+      if (isMaintenance) {
+        // Opens at 6pm ET today
+        target.setHours(18, 0, 0, 0);
+      } else if (day === 5 && hhmm >= 1700) {
+        // Friday after close — next open Sunday 6pm
+        target.setDate(target.getDate() + 2);
+        target.setHours(18, 0, 0, 0);
+      } else if (day === 6) {
+        // Saturday — next open Sunday 6pm
+        target.setDate(target.getDate() + 1);
+        target.setHours(18, 0, 0, 0);
+      } else if (day === 0 && hhmm < 1800) {
+        // Sunday before 6pm
+        target.setHours(18, 0, 0, 0);
+      }
+
+      const diff = target - et;
+      const totalMins = Math.max(0, Math.floor(diff / 60000));
+      const days = Math.floor(totalMins / 1440);
+      const hrs = Math.floor((totalMins % 1440) / 60);
+      const mins = totalMins % 60;
+
+      el_cd.style.background = '#3d0a0a';
+      el_cd.style.color = '#ff1744';
+      el_cd.style.border = '1px solid #ff1744';
+      let txt = 'CLOSED — opens in ';
+      if (days > 0) txt += `${days}d `;
+      txt += `${hrs}h ${mins}m`;
+      el_cd.textContent = txt;
+    }
+  }
+  updateMarketCountdown();
+  setInterval(updateMarketCountdown, 10000); // update every 10s
 
   // --- Settings ---
   function _getApiKey() {
