@@ -703,6 +703,53 @@ async def ai_strategies_list():
     return strategies
 
 
+@app.get("/webhook/ai/strategy-params/{strategy_name}")
+async def ai_strategy_params(strategy_name: str):
+    """Fetch optimized params from TradeHub API for a strategy."""
+    tradehub_url = f"https://tradehub.up.railway.app/api/bot/strategy-params/{strategy_name}?apiKey=tradehub-bot-key"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(tradehub_url)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data
+        else:
+            return {"success": False, "error": f"TradeHub returned {resp.status_code}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/webhook/ai/strategy-defaults/{strategy_name}")
+async def ai_strategy_defaults(strategy_name: str):
+    """Get default params from the strategy's dataclass."""
+    import strategy_runner
+    try:
+        import vbt_adapter
+    except Exception:
+        pass
+    strat = strategy_runner.STRATEGY_REGISTRY.get(strategy_name)
+    if not strat:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_name}' not found")
+    # Get the params class and its defaults
+    params_class = None
+    if hasattr(strat, 'params_class'):
+        params_class = strat.params_class
+    elif hasattr(strat, 'get_default_params'):
+        return strat.get_default_params()
+    elif isinstance(strat, type) and hasattr(strat, '__dataclass_fields__'):
+        params_class = strat
+
+    if params_class is None:
+        return {"params": {}, "note": "No params class found"}
+
+    from dataclasses import fields as dc_fields
+    defaults = {}
+    for f in dc_fields(params_class):
+        val = f.default if f.default is not f.default_factory else None
+        defaults[f.name] = val
+    return {"strategy": strategy_name, "params": defaults, "count": len(defaults)}
+
+
 @app.get("/webhook/ai/trades")
 async def ai_trades_endpoint(relay_user: str = None, relay_id: str = None, limit: int = 50):
     return ai_gate.get_trades(relay_user, relay_id=relay_id, limit=limit)

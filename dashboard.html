@@ -589,11 +589,12 @@
       <h3 id="wizardTitle">Create New Bot</h3>
       <button class="modal-close" onclick="closeWizard()">&times;</button>
     </div>
-    <div class="wizard-steps">
+    <div class="wizard-steps" id="wizardSteps">
       <div class="wizard-step active" data-step="1"><div class="wizard-step-num">1</div> Config</div>
-      <div class="wizard-step" data-step="2"><div class="wizard-step-num">2</div> Indicators</div>
-      <div class="wizard-step" data-step="3"><div class="wizard-step-num">3</div> Entry Prompt</div>
-      <div class="wizard-step" data-step="4"><div class="wizard-step-num">4</div> Exit Prompt</div>
+      <div class="wizard-step" data-step="2" id="wizStepParams" style="display:none"><div class="wizard-step-num">2</div> Params</div>
+      <div class="wizard-step" data-step="3"><div class="wizard-step-num">3</div> Indicators</div>
+      <div class="wizard-step" data-step="4"><div class="wizard-step-num">4</div> Entry Prompt</div>
+      <div class="wizard-step" data-step="5"><div class="wizard-step-num">5</div> Exit Prompt</div>
     </div>
     <div class="wizard-body" id="wizardBody"></div>
     <div class="wizard-footer">
@@ -1396,7 +1397,8 @@ REASON: [one concise sentence]`;
     const backBtn = el('wizBack');
     const nextBtn = el('wizNext');
     backBtn.style.visibility = wizStep === 1 ? 'hidden' : 'visible';
-    if (wizStep === 4) {
+    const lastStep = 5;
+    if (wizStep === lastStep) {
       nextBtn.textContent = wizardEditMode ? 'Save Changes' : 'Create Bot';
     } else {
       nextBtn.textContent = 'Next';
@@ -1404,13 +1406,19 @@ REASON: [one concise sentence]`;
 
     const body = el('wizardBody');
 
+    // Show/hide params step based on mode
+    const paramsStep = el('wizStepParams');
+    if (paramsStep) paramsStep.style.display = wizData.mode === 'python' ? '' : 'none';
+
     if (wizStep === 1) {
       renderStep1(body);
     } else if (wizStep === 2) {
-      renderStep2(body);
+      renderStepParams(body);
     } else if (wizStep === 3) {
-      renderStep3(body);
+      renderStep2(body);
     } else if (wizStep === 4) {
+      renderStep3(body);
+    } else if (wizStep === 5) {
       renderStep4(body);
     }
   }
@@ -1527,6 +1535,120 @@ REASON: [one concise sentence]`;
     wizData.strategy_name = el('wizStrategyName')?.value || '';
     wizData.instrument = (el('wizInstrument')?.value || 'MNQ1!').trim();
     wizData.qty = parseInt(el('wizQty')?.value || '1') || 1;
+  }
+
+  // ── Step 2: Strategy Parameters (Python bots only) ──
+  async function renderStepParams(body) {
+    body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim);">Loading parameters...</div>';
+
+    // Initialize params from existing config
+    if (!wizData.strategy_params) wizData.strategy_params = {};
+    if (!wizData.auto_update_params) wizData.auto_update_params = false;
+
+    // Fetch defaults from strategy class
+    let defaults = {};
+    try {
+      const resp = await fetch(`${BASE}/webhook/ai/strategy-defaults/${encodeURIComponent(wizData.strategy_name)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        defaults = data.params || {};
+      }
+    } catch(e) {}
+
+    // Fetch optimized params from TradeHub
+    let tradehubParams = {};
+    let tradehubMeta = {};
+    try {
+      const resp = await fetch(`${BASE}/webhook/ai/strategy-params/${encodeURIComponent(wizData.strategy_name)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.success) {
+          tradehubParams = data.params || {};
+          tradehubMeta = data.confidence || {};
+        }
+      }
+    } catch(e) {}
+
+    // Merge: existing config > tradehub > defaults
+    const merged = { ...defaults, ...tradehubParams, ...wizData.strategy_params };
+
+    // Group params by prefix
+    const groups = {};
+    for (const [key, val] of Object.entries(merged)) {
+      let group = 'General';
+      if (key.startsWith('l_')) group = 'Long';
+      else if (key.startsWith('s_')) group = 'Short';
+      else if (key.startsWith('oma_')) group = 'OMA';
+      else if (key.startsWith('vol_')) group = 'Volatility';
+      else if (key.startsWith('dlc_')) group = 'Daily Loss';
+      else if (key.startsWith('dur_')) group = 'Duration BE';
+      if (!groups[group]) groups[group] = [];
+      groups[group].push({ key, val, default_val: defaults[key], tradehub_val: tradehubParams[key] });
+    }
+
+    // Build confidence badge
+    const confBadge = tradehubMeta.tier
+      ? `<div style="margin-bottom:12px;padding:8px 14px;border-radius:8px;background:#1a2a1a;border:1px solid #2a4a2a;display:inline-block;">
+           <span style="color:#0f0;font-weight:600;">${tradehubMeta.tier}</span>
+           <span style="color:var(--text-dim);margin-left:8px;">Score: ${tradehubMeta.score}/5 — ${tradehubMeta.action || ''}</span>
+         </div>`
+      : '';
+
+    // Build param rows
+    let html = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+          <label style="color:var(--text-dim);font-size:12px;">Strategy: ${wizData.strategy_name}</label>
+          ${confBadge}
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="wizAutoUpdate" ${wizData.auto_update_params ? 'checked' : ''}>
+          <span style="color:var(--text-dim);font-size:12px;">Auto-update daily from TradeHub</span>
+        </label>
+      </div>
+      <div style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;">
+    `;
+
+    for (const [group, params] of Object.entries(groups)) {
+      html += `<div style="margin-bottom:8px;"><div style="color:var(--accent);font-size:11px;font-weight:600;margin-bottom:4px;text-transform:uppercase;">${group}</div>`;
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">';
+      for (const p of params) {
+        const changed = p.tradehub_val !== undefined && p.tradehub_val !== p.default_val;
+        const labelColor = changed ? '#4fc3f7' : 'var(--text-dim)';
+        const inputType = typeof p.val === 'boolean' ? 'checkbox' : typeof p.val === 'number' ? 'number' : 'text';
+        if (inputType === 'checkbox') {
+          html += `<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:${labelColor};">
+            <input type="checkbox" data-param="${p.key}" ${p.val ? 'checked' : ''}> ${p.key}
+          </label>`;
+        } else {
+          html += `<div style="display:flex;align-items:center;gap:4px;font-size:11px;">
+            <span style="color:${labelColor};min-width:140px;">${p.key}</span>
+            <input type="${inputType}" data-param="${p.key}" value="${p.val}" style="width:80px;padding:2px 4px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;" ${inputType === 'number' ? 'step="any"' : ''}>
+          </div>`;
+        }
+      }
+      html += '</div></div>';
+    }
+    html += '</div>';
+    html += '<div style="margin-top:8px;color:var(--text-dim);font-size:10px;">Blue = changed from default by TradeHub optimization</div>';
+
+    body.innerHTML = html;
+  }
+
+  function saveStepParams() {
+    const params = {};
+    document.querySelectorAll('[data-param]').forEach(inp => {
+      const key = inp.dataset.param;
+      if (inp.type === 'checkbox') {
+        params[key] = inp.checked;
+      } else if (inp.type === 'number') {
+        params[key] = parseFloat(inp.value) || 0;
+      } else {
+        params[key] = inp.value;
+      }
+    });
+    wizData.strategy_params = params;
+    wizData.auto_update_params = el('wizAutoUpdate')?.checked || false;
   }
 
   async function renderStep2(body) {
@@ -1660,9 +1782,12 @@ REASON: [one concise sentence]`;
 
   function wizardBack() {
     if (wizStep <= 1) return;
-    if (wizStep === 3) saveStep3();
-    if (wizStep === 4) saveStep4();
+    if (wizStep === 2) saveStepParams();
+    if (wizStep === 4) saveStep3();
+    if (wizStep === 5) saveStep4();
     wizStep--;
+    // Skip params step if not python mode
+    if (wizStep === 2 && wizData.mode !== 'python') wizStep--;
     renderWizardStep();
   }
 
@@ -1672,16 +1797,22 @@ REASON: [one concise sentence]`;
       if (!wizData.bot_id) { alert('Bot ID is required'); return; }
       if (!wizData.account) { alert('Account is required'); return; }
       if (wizData.mode === 'copy' && !wizData.source_bot) { alert('Source Bot is required for copy mode'); return; }
-      wizStep = 2;
+      if (wizData.mode === 'python' && !wizData.strategy_name) { alert('Strategy is required for Python mode'); return; }
+      // Skip to step 2 (params) for python, step 3 (indicators) otherwise
+      wizStep = wizData.mode === 'python' ? 2 : 3;
       renderWizardStep();
     } else if (wizStep === 2) {
+      saveStepParams();
       wizStep = 3;
       renderWizardStep();
     } else if (wizStep === 3) {
-      saveStep3();
       wizStep = 4;
       renderWizardStep();
     } else if (wizStep === 4) {
+      saveStep3();
+      wizStep = 5;
+      renderWizardStep();
+    } else if (wizStep === 5) {
       saveStep4();
       if (wizardEditMode) {
         await saveBot();
@@ -1708,7 +1839,7 @@ REASON: [one concise sentence]`;
       const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
       // 1. Create bot
-      const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty }) : undefined;
+      const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty, auto_update_params: wizData.auto_update_params, ...(wizData.strategy_params || {}) }) : undefined;
       const botBody = {
         bot_id: wizData.bot_id,
         mode: wizData.mode,
