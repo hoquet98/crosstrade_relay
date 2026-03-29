@@ -1227,9 +1227,10 @@
   // ══════════════════════════════════════════════════════════════════════════
 
   let wizStep = 1;
-  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', indicators: {}, entry_prompt: '', manage_prompt: '' };
+  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', strategy_name: '', instrument: 'MNQ1!', qty: 1, indicators: {}, entry_prompt: '', manage_prompt: '' };
   let wizIndicators = []; // fetched from API
   let availableModels = [];
+  let availableStrategies = [];
   let wizardEditMode = false;
   let wizardEditBotId = null;
 
@@ -1316,10 +1317,11 @@ REASON: [one concise sentence]`;
     wizStep = 1;
     wizardEditMode = false;
     wizardEditBotId = null;
-    wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', indicators: {}, entry_prompt: DEFAULT_ENTRY_PROMPT, manage_prompt: DEFAULT_MANAGE_PROMPT };
+    wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', strategy_name: '', instrument: 'MNQ1!', qty: 1, indicators: {}, entry_prompt: DEFAULT_ENTRY_PROMPT, manage_prompt: DEFAULT_MANAGE_PROMPT };
     wizIndicators = [];
-    // Fetch available models
+    // Fetch available models and strategies
     try { availableModels = await (await fetch(`${BASE}/webhook/ai/models`)).json(); } catch(e) { availableModels = []; }
+    try { availableStrategies = await (await fetch(`${BASE}/webhook/ai/strategies`)).json(); } catch(e) { availableStrategies = []; }
     el('wizardTitle').textContent = 'Create New Bot';
     el('wizDelete').style.display = 'none';
     el('wizardOverlay').classList.add('active');
@@ -1351,6 +1353,11 @@ REASON: [one concise sentence]`;
       if (resp.ok) indicators = await resp.json();
     } catch (e) {}
     try { availableModels = await (await fetch(`${BASE}/webhook/ai/models`)).json(); } catch(e) { availableModels = []; }
+    try { availableStrategies = await (await fetch(`${BASE}/webhook/ai/strategies`)).json(); } catch(e) { availableStrategies = []; }
+
+    // Parse config_json for instrument/qty/strategy params
+    let configParams = {};
+    if (bot.config_json) { try { configParams = JSON.parse(bot.config_json); } catch(e) {} }
 
     wizData = {
       bot_id: bot.bot_id,
@@ -1359,6 +1366,9 @@ REASON: [one concise sentence]`;
       account: bot.account || '',
       strategy_tag: bot.strategy_tag || 'AIGate',
       ai_model: bot.ai_model || '',
+      strategy_name: bot.strategy_name || '',
+      instrument: configParams.instrument || 'MNQ1!',
+      qty: configParams.qty || 1,
       indicators: indicators,
       entry_prompt: bot.entry_prompt || DEFAULT_ENTRY_PROMPT,
       manage_prompt: bot.manage_prompt || DEFAULT_MANAGE_PROMPT,
@@ -1454,6 +1464,25 @@ REASON: [one concise sentence]`;
           </select>
         </div>
       </div>
+      <div id="wizPythonFields" style="display:${wizData.mode === 'python' ? 'block' : 'none'}; margin-top:8px;">
+        <div class="wiz-field">
+          <label>Strategy</label>
+          <select id="wizStrategyName">
+            <option value="">-- select strategy --</option>
+            ${availableStrategies.map(s => `<option value="${s.name}" ${wizData.strategy_name === s.name ? 'selected' : ''}>${s.name}${s.description ? ' — ' + s.description : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="wiz-row">
+          <div class="wiz-field">
+            <label>Instrument</label>
+            <input type="text" id="wizInstrument" value="${wizData.instrument}" placeholder="e.g. MNQ1!, MGC1!, ES1!">
+          </div>
+          <div class="wiz-field">
+            <label>Quantity</label>
+            <input type="number" id="wizQty" value="${wizData.qty}" min="1" max="100" style="width:80px;">
+          </div>
+        </div>
+      </div>
       <div id="wizTVAlert" style="display:${wizData.mode === 'normal' ? 'block' : 'none'}; margin-top:16px; padding:14px; background:#111; border:1px solid var(--border); border-radius:8px;">
         <div style="margin-bottom:12px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
@@ -1480,6 +1509,7 @@ REASON: [one concise sentence]`;
     el('wizMode').addEventListener('change', function() {
       el('wizSourceField').style.display = this.value === 'copy' ? 'block' : 'none';
       el('wizTVAlert').style.display = this.value === 'normal' ? 'block' : 'none';
+      el('wizPythonFields').style.display = this.value === 'python' ? 'block' : 'none';
     });
 
     // Update alert text when bot ID changes
@@ -1494,6 +1524,9 @@ REASON: [one concise sentence]`;
     wizData.account = (el('wizAccount')?.value || '').trim();
     wizData.strategy_tag = (el('wizStrategyTag')?.value || 'AIGate').trim();
     wizData.ai_model = el('wizAiModel')?.value || '';
+    wizData.strategy_name = el('wizStrategyName')?.value || '';
+    wizData.instrument = (el('wizInstrument')?.value || 'MNQ1!').trim();
+    wizData.qty = parseInt(el('wizQty')?.value || '1') || 1;
   }
 
   async function renderStep2(body) {
@@ -1675,6 +1708,7 @@ REASON: [one concise sentence]`;
       const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
       // 1. Create bot
+      const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty }) : undefined;
       const botBody = {
         bot_id: wizData.bot_id,
         mode: wizData.mode,
@@ -1682,6 +1716,8 @@ REASON: [one concise sentence]`;
         strategy_tag: wizData.strategy_tag,
         ai_model: wizData.ai_model || undefined,
         source_bot: wizData.mode === 'copy' ? wizData.source_bot : undefined,
+        strategy_name: wizData.mode === 'python' ? wizData.strategy_name : undefined,
+        config_json: configJson,
         entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : undefined,
         manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : undefined,
       };
@@ -1733,12 +1769,15 @@ REASON: [one concise sentence]`;
       const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
 
       // 1. PUT bot config
+      const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty }) : null;
       const botBody = {
         mode: wizData.mode,
         account: wizData.account,
         strategy_tag: wizData.strategy_tag,
         ai_model: wizData.ai_model || null,
         source_bot: wizData.mode === 'copy' ? wizData.source_bot : null,
+        strategy_name: wizData.mode === 'python' ? wizData.strategy_name : null,
+        config_json: configJson,
         entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : null,
         manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : null,
       };

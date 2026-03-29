@@ -686,6 +686,23 @@ async def ai_positions_clear(request: Request):
     return {"status": "ok", "details": "AI position cleared"}
 
 
+@app.get("/webhook/ai/strategies")
+async def ai_strategies_list():
+    """List available Python strategies for bot creation."""
+    import strategy_runner
+    try:
+        import vbt_adapter  # triggers auto-discovery
+    except Exception:
+        pass
+    strategies = []
+    for name, obj in strategy_runner.STRATEGY_REGISTRY.items():
+        desc = getattr(obj, 'description', '') if not isinstance(obj, type) else ''
+        if isinstance(obj, type):
+            desc = getattr(obj, 'description', '')
+        strategies.append({"name": name, "description": desc})
+    return strategies
+
+
 @app.get("/webhook/ai/trades")
 async def ai_trades_endpoint(relay_user: str = None, relay_id: str = None, limit: int = 50):
     return ai_gate.get_trades(relay_user, relay_id=relay_id, limit=limit)
