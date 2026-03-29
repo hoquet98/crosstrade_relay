@@ -267,41 +267,44 @@ def _update_candle(instrument: str, price: float, cvd_delta: int):
 
     # New minute — close previous candle, start new one
     if candle is None or candle["time"] != minute_ts:
-        # Save completed candle
+        # Save completed candle (skip flat bars — no price movement = market closed)
         if candle is not None:
-            _candles[instrument].append(candle)
-            # Trim to max
-            if len(_candles[instrument]) > MAX_CANDLES:
-                _candles[instrument] = _candles[instrument][-MAX_CANDLES:]
+            is_flat = (candle["open"] == candle["high"] == candle["low"] == candle["close"])
 
-            # Persist completed candle to database
-            try:
-                state = _cvd_state.get(instrument, {})
-                candle_ts_iso = datetime.fromtimestamp(candle["time"], tz=timezone.utc).isoformat()
-                ai_gate.save_bar(
-                    instrument=instrument,
-                    timestamp=candle_ts_iso,
-                    o=candle["open"], h=candle["high"],
-                    l=candle["low"], c=candle["close"],
-                    volume=state.get("volume", 0),
-                    cvd=state.get("cvd", 0),
-                    cvd_delta=candle.get("cvd_delta", 0),
-                )
-            except Exception as e:
-                logger.warning(f"CVD: failed to save bar to DB: {e}")
+            if not is_flat:
+                _candles[instrument].append(candle)
+                # Trim to max
+                if len(_candles[instrument]) > MAX_CANDLES:
+                    _candles[instrument] = _candles[instrument][-MAX_CANDLES:]
 
-            # Aggregate into 5-min bars
-            try:
-                ai_gate.aggregate_5m_bar(instrument)
-            except Exception as e:
-                logger.warning(f"CVD: 5m aggregation error: {e}")
+                # Persist completed candle to database
+                try:
+                    state = _cvd_state.get(instrument, {})
+                    candle_ts_iso = datetime.fromtimestamp(candle["time"], tz=timezone.utc).isoformat()
+                    ai_gate.save_bar(
+                        instrument=instrument,
+                        timestamp=candle_ts_iso,
+                        o=candle["open"], h=candle["high"],
+                        l=candle["low"], c=candle["close"],
+                        volume=state.get("volume", 0),
+                        cvd=state.get("cvd", 0),
+                        cvd_delta=candle.get("cvd_delta", 0),
+                    )
+                except Exception as e:
+                    logger.warning(f"CVD: failed to save bar to DB: {e}")
 
-            # Trigger Python strategy bots on bar close
-            try:
-                import strategy_runner
-                asyncio.ensure_future(strategy_runner.run_python_bots())
-            except Exception as e:
-                logger.warning(f"CVD: strategy runner error: {e}")
+                # Aggregate into 5-min bars
+                try:
+                    ai_gate.aggregate_5m_bar(instrument)
+                except Exception as e:
+                    logger.warning(f"CVD: 5m aggregation error: {e}")
+
+                # Trigger Python strategy bots on bar close
+                try:
+                    import strategy_runner
+                    asyncio.ensure_future(strategy_runner.run_python_bots())
+                except Exception as e:
+                    logger.warning(f"CVD: strategy runner error: {e}")
 
         # Start new candle
         _current_candle[instrument] = {
