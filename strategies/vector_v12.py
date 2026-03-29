@@ -19,9 +19,14 @@ Standard interface for generic run_study.py:
 
 import numpy as np
 import pandas as pd
-import vectorbtpro as vbt
 from dataclasses import dataclass
 from numba import njit
+
+# Order record dtype — replaces order_dt to avoid vectorbtpro dependency
+order_dt = np.dtype([
+    ('id', np.int64), ('col', np.int64), ('idx', np.int64),
+    ('size', np.float64), ('price', np.float64), ('fees', np.float64), ('side', np.int64),
+])
 
 from strategies.window_result import WindowResult
 
@@ -583,7 +588,7 @@ def run_simulation(
     """
     # Pre-allocate order records (max 2 orders per bar: exit + entry)
     max_orders = n * 2
-    order_records = np.empty(max_orders, dtype=vbt.pf_enums.order_dt)
+    order_records = np.empty(max_orders, dtype=order_dt)
     order_count = 0
 
     # Position state
