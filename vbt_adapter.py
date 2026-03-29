@@ -26,13 +26,10 @@ import pandas as pd
 from datetime import datetime, timezone
 from dataclasses import fields as dataclass_fields
 
-# Add vectorBT Strategy project to import path so strategies/ is importable
-_VBT_PROJECT_DIR = os.environ.get(
-    "VBT_STRATEGY_DIR",
-    r"C:\Users\hoque\vectorBT Strategy"
-)
-if _VBT_PROJECT_DIR not in sys.path:
-    sys.path.insert(0, _VBT_PROJECT_DIR)
+# Add this project's root to import path so strategies/ is importable
+_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PROJECT_DIR not in sys.path:
+    sys.path.insert(0, _PROJECT_DIR)
 
 from strategy_runner import BaseStrategy, STRATEGY_REGISTRY
 
@@ -280,7 +277,7 @@ def auto_discover_vbt_strategies():
 
     Looks in the vectorBT Strategy/strategies/ folder for .py files with a Strategy class.
     """
-    strategies_dir = os.path.join(_VBT_PROJECT_DIR, "strategies")
+    strategies_dir = os.path.join(_PROJECT_DIR, "strategies")
     if not os.path.isdir(strategies_dir):
         logger.warning(f"VBT strategies dir not found: {strategies_dir}")
         return
@@ -297,7 +294,7 @@ def auto_discover_vbt_strategies():
             if hasattr(mod, 'Strategy') and hasattr(mod, 'detect_signals_from_dict'):
                 register_vbt_strategy(module_name, module_path)
         except Exception as e:
-            logger.debug(f"Skipping {module_path}: {e}")
+            logger.warning(f"Skipping {module_path}: {e}")
 
 
 # Auto-discover on import
