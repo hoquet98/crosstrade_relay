@@ -483,15 +483,14 @@
     </div>
   </div>
 
-  <!-- Rollover Tracker -->
-  <div id="rolloverBar" style="
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 8px 20px; margin-bottom: 8px;
+  <!-- Instrument Selector + Rollover -->
+  <div id="instrumentBar" style="
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 16px; margin-bottom: 8px;
     background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
-    font-size: 11px; color: var(--text-dim);
+    font-size: 12px;
   ">
-    <span style="font-weight:600; color:var(--text);">Contracts:</span>
-    <span id="rolloverItems">Loading...</span>
+    <div id="instrumentTabs" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
   </div>
 
   <!-- CVD Price Chart -->
@@ -1036,35 +1035,83 @@
     }
   }
 
-  // --- Rollover Tracker ---
-  async function fetchRollover() {
+  // --- Instrument Selector + Rollover ---
+  let selectedInstrument = null; // null = auto (first active)
+  let activeInstrumentList = []; // instruments with live data
+
+  async function fetchInstrumentTabs() {
     try {
-      const resp = await fetch(`${BASE}/instruments`);
-      const instruments = await resp.json();
-      const container = el('rolloverItems');
-      if (!instruments || instruments.length === 0) { container.textContent = 'No instruments'; return; }
+      const [instResp, cvdResp] = await Promise.all([
+        fetch(`${BASE}/instruments`),
+        fetch(`${BASE}/cvd`)
+      ]);
+      const instruments = instResp.ok ? await instResp.json() : [];
+      const cvdData = cvdResp.ok ? await cvdResp.json() : [];
+
+      // Get active instruments (ones with live CVD data)
+      const activeSet = new Set(cvdData.map(d => d.instrument));
+
+      const container = el('instrumentTabs');
+      if (!instruments || instruments.length === 0) { container.innerHTML = '<span style="color:var(--text-dim);">No instruments</span>'; return; }
 
       const now = new Date();
-      const items = instruments
-        .filter(i => i.current_contract && i.roll_date)
-        .map(i => {
-          const roll = new Date(i.roll_date + 'T00:00:00');
-          const diff = Math.ceil((roll - now) / (1000 * 60 * 60 * 24));
-          let color = 'var(--text-dim)';
-          let badge = '';
-          if (diff <= 0) { color = '#ff1744'; badge = 'ROLLED'; }
-          else if (diff <= 7) { color = '#ff9800'; badge = `${diff}d`; }
-          else { color = '#00e676'; badge = `${diff}d`; }
-          return `<span style="display:inline-flex;align-items:center;gap:4px;">
-            <strong>${i.symbol}</strong> ${i.current_contract}
-            <span style="color:${color};font-weight:600;">${badge}</span>
-          </span>`;
-        });
-      container.innerHTML = items.join('<span style="color:var(--border);">|</span>');
+
+      // Build tabs for instruments that have roll dates (configured ones)
+      const configured = instruments.filter(i => i.current_contract);
+      activeInstrumentList = configured;
+
+      // Auto-select first active instrument if none selected
+      if (!selectedInstrument && cvdData.length > 0) {
+        selectedInstrument = cvdData[0].instrument;
+      }
+
+      const tabs = configured.map(i => {
+        // Match to CVD data by root symbol
+        const cvdMatch = cvdData.find(d => d.instrument.startsWith(i.symbol) || d.instrument.startsWith(i.root));
+        const isActive = !!cvdMatch;
+        const fullName = cvdMatch ? cvdMatch.instrument : `${i.symbol} ${i.current_contract}`;
+        const isSelected = selectedInstrument === fullName;
+
+        // Roll countdown
+        const roll = new Date(i.roll_date + 'T00:00:00');
+        const diff = Math.ceil((roll - now) / (1000 * 60 * 60 * 24));
+        let rollColor = '#00e676';
+        let rollText = `${diff}d`;
+        if (diff <= 0) { rollColor = '#ff1744'; rollText = 'ROLL!'; }
+        else if (diff <= 7) { rollColor = '#ff9800'; }
+
+        const bgColor = isSelected ? 'var(--accent)' : isActive ? '#1a2a1a' : '#1a1a1a';
+        const borderColor = isSelected ? 'var(--accent)' : isActive ? '#2a4a2a' : 'var(--border)';
+        const textColor = isSelected ? '#fff' : isActive ? '#e6edf3' : 'var(--text-dim)';
+        const cursor = isActive ? 'pointer' : 'default';
+        const dot = isActive ? '<span style="color:#00e676;">●</span>' : '<span style="color:#ff1744;">○</span>';
+
+        return `<div onclick="${isActive ? `selectInstrument('${fullName}')` : ''}" style="
+          display:inline-flex; align-items:center; gap:6px;
+          padding:5px 12px; border-radius:6px; cursor:${cursor};
+          background:${bgColor}; border:1px solid ${borderColor};
+          transition: all 0.2s;
+        ">
+          ${dot}
+          <strong style="color:${textColor};">${i.symbol}</strong>
+          <span style="color:${textColor};opacity:0.7;">${i.current_contract}</span>
+          <span style="color:${rollColor};font-size:10px;font-weight:600;">${rollText}</span>
+        </div>`;
+      });
+
+      container.innerHTML = tabs.join('');
     } catch(e) {}
   }
-  fetchRollover();
-  setInterval(fetchRollover, 60000); // refresh every minute
+
+  function selectInstrument(instrument) {
+    selectedInstrument = instrument;
+    fetchInstrumentTabs(); // re-render tabs
+    fetchCVD(); // update CVD widget
+    fetchCandles(); // update chart
+  }
+
+  fetchInstrumentTabs();
+  setInterval(fetchInstrumentTabs, 30000); // refresh every 30s
 
   // --- CVD Widget ---
   async function fetchCVD() {
@@ -1075,7 +1122,12 @@
         el('cvdStatus').textContent = 'no data';
         return;
       }
-      const c = data[0];
+      // Find selected instrument, fall back to first
+      let c = data[0];
+      if (selectedInstrument) {
+        const match = data.find(d => d.instrument === selectedInstrument);
+        if (match) c = match;
+      }
       el('cvdInstrument').textContent = c.instrument || '--';
       el('cvdLast').textContent = c.last ? c.last.toFixed(2) : '--';
       el('cvdBid').textContent = c.bid ? c.bid.toFixed(2) : '--';
@@ -1188,11 +1240,14 @@
 
   async function fetchCandles() {
     try {
-      // Get instrument name from CVD state
+      // Use selected instrument or first available
       const cvdResp = await fetch(`${BASE}/cvd`);
       const cvdData = await cvdResp.json();
       if (!cvdData || cvdData.length === 0) return;
-      const inst = cvdData[0].instrument;
+      let inst = selectedInstrument;
+      if (!inst) {
+        inst = cvdData[0].instrument;
+      }
       if (!inst) return;
 
       // Build URL with bot filter
