@@ -362,8 +362,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 failCount > 0 ? "Last Error: " + lastError : "Webhook: " + WebhookUrl
             );
 
-            Draw.TextFixed(this, "QTPDataFeedStatus", statusText,
-                TextPosition.BottomRight, statusColor,
+            NinjaTrader.NinjaScript.DrawingTools.Draw.TextFixed(this, "QTPDataFeedStatus", statusText,
+                NinjaTrader.NinjaScript.DrawingTools.TextPosition.BottomRight, statusColor,
                 new Gui.Tools.SimpleFont("Consolas", 10),
                 Brushes.Transparent, Brushes.Transparent, 0);
         }
