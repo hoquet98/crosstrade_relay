@@ -1060,9 +1060,24 @@
       const configured = instruments.filter(i => i.current_contract);
       activeInstrumentList = configured;
 
+      // Sort: active instruments first, then by preferred order
+      const symbolOrder = ['MNQ','NQ','MES','ES','M2K','RTY','MGC','GC','MCL','CL','SIL','SI'];
+      configured.sort((a, b) => {
+        const aActive = cvdData.some(d => d.instrument.startsWith(a.symbol) || d.instrument.startsWith(a.root));
+        const bActive = cvdData.some(d => d.instrument.startsWith(b.symbol) || d.instrument.startsWith(b.root));
+        if (aActive !== bActive) return bActive - aActive; // active first
+        const aIdx = symbolOrder.indexOf(a.symbol);
+        const bIdx = symbolOrder.indexOf(b.symbol);
+        return (aIdx === -1 ? 99 : aIdx) - (bIdx === -1 ? 99 : bIdx);
+      });
+
       // Auto-select first active instrument if none selected
-      if (!selectedInstrument && cvdData.length > 0) {
-        selectedInstrument = cvdData[0].instrument;
+      if (!selectedInstrument) {
+        const firstActive = configured.find(i => cvdData.some(d => d.instrument.startsWith(i.symbol) || d.instrument.startsWith(i.root)));
+        if (firstActive) {
+          const match = cvdData.find(d => d.instrument.startsWith(firstActive.symbol) || d.instrument.startsWith(firstActive.root));
+          if (match) selectedInstrument = match.instrument;
+        }
       }
 
       const tabs = configured.map(i => {
