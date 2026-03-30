@@ -40,15 +40,27 @@ async def lifespan(app: FastAPI):
     ai_gate.init_db()
     ai_gate.startup_recovery()
     watchdog = asyncio.create_task(ai_gate.stale_position_watchdog())
-    # Start CVD WebSocket if API key is available
-    ct_key = os.environ.get("CT_API_KEY", "")
-    cvd_instruments = os.environ.get("CVD_INSTRUMENTS", "MNQ JUN26").split(",")
-    cvd_instruments = [i.strip() for i in cvd_instruments if i.strip()]
-    if ct_key:
-        cvd.start(ct_key, cvd_instruments)
+    # CrossTrade WebSocket disabled — using NT8 QTPDataFeed instead
+    # ct_key = os.environ.get("CT_API_KEY", "")
+    # cvd_instruments = os.environ.get("CVD_INSTRUMENTS", "MNQ JUN26").split(",")
+    # cvd_instruments = [i.strip() for i in cvd_instruments if i.strip()]
+    # if ct_key:
+    #     cvd.start(ct_key, cvd_instruments)
+
+    # Load historical bars for any instruments we have data for
+    try:
+        conn = db.get_connection()
+        rows = conn.execute("SELECT DISTINCT instrument FROM ai_bars ORDER BY instrument").fetchall()
+        conn.close()
+        for r in rows:
+            cvd._load_historical_bars([r["instrument"]])
+    except Exception as e:
+        logger.warning(f"Failed to load historical bars: {e}")
+
     logger.info(f"Trade Relay started -- database initialized (AI Gate: {'DRY RUN' if ai_gate.AI_DRY_RUN else 'LIVE'})")
+    logger.info("Data feed: waiting for NT8 QTPDataFeed on /webhook/data")
     yield
-    cvd.stop()
+    # cvd.stop()
     watchdog.cancel()
     logger.info("Trade Relay shutting down")
 
