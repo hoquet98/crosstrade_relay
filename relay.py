@@ -604,19 +604,38 @@ async def nt_tables(request: Request, db_param: str = None):
 # AI GATE ROUTES (thin wrappers — logic lives in ai_gate.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
+_data_feed_count: dict[str, int] = {}
+_data_feed_last_log: float = 0
+
 @app.post("/webhook/data")
 async def webhook_data(request: Request):
     """NT8 QTPDataFeed webhook — receives 1-second OHLCV + CVD + DOM data.
     No auth required (high frequency, low latency).
     """
+    global _data_feed_last_log
+
     body = await request.body()
     body_text = body.decode("utf-8").strip()
     if not body_text:
+        logger.warning("Data feed: empty payload received")
         raise HTTPException(status_code=400, detail="Empty payload")
     try:
         data = json.loads(body_text)
     except json.JSONDecodeError as e:
+        logger.warning(f"Data feed: invalid JSON: {e} | body={body_text[:200]}")
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    symbol = data.get("symbol", "unknown")
+    _data_feed_count[symbol] = _data_feed_count.get(symbol, 0) + 1
+
+    # Log summary every 30 seconds
+    import time as _time
+    now = _time.time()
+    if now - _data_feed_last_log >= 30:
+        counts = ", ".join(f"{k}: {v}" for k, v in _data_feed_count.items())
+        logger.info(f"Data feed stats (30s): {counts}")
+        _data_feed_count.clear()
+        _data_feed_last_log = now
 
     import cvd
     cvd.process_nt8_tick(data)
