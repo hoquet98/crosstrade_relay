@@ -37,7 +37,7 @@ using NinjaTrader.NinjaScript;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public class QTPDataFeed : Indicator
+    public class QTPDataFeed2 : Indicator
     {
         // ─── STATIC HTTP CLIENT ─────────────────────────────────────────────
         private static readonly HttpClient httpClient = new HttpClient();
@@ -67,7 +67,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (State == State.SetDefaults)
             {
                 Description         = "Pushes OHLCV, CVD, and DOM depth to external webhook on every bar close.";
-                Name                = "QTPDataFeed";
+                Name                = "QTPDataFeed2";
                 Calculate           = Calculate.OnBarClose;
                 IsOverlay           = true;
                 DisplayInDataBox    = false;
@@ -75,7 +75,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 IsSuspendedWhileInactive = false;
 
                 // Connection
-                WebhookUrl          = "http://localhost:8000/webhook/data";
+                WebhookUrl          = "http://localhost/webhook/data";
                 SymbolTag           = "";
                 HttpTimeoutSeconds  = 5;
                 EnableFeed          = true;
@@ -107,6 +107,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                     + " | Webhook: " + WebhookUrl
                     + " | Tag: " + (string.IsNullOrEmpty(SymbolTag) ? "(auto)" : SymbolTag)
                     + " | DOM: " + (EnableDom ? DomLevels + " levels" : "off"));
+            }
+            else if (State == State.Historical)
+            {
+                Print("QTPDataFeed: Historical state for " + Instrument.FullName + " — waiting for realtime...");
+            }
+            else if (State == State.Transition)
+            {
+                Print("QTPDataFeed: Transitioning to realtime for " + Instrument.FullName);
+            }
+            else if (State == State.Realtime)
+            {
+                Print("QTPDataFeed: REALTIME for " + Instrument.FullName + " — data feed active!");
             }
             else if (State == State.Terminated)
             {
@@ -193,8 +205,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!EnableFeed)
                 return;
 
-            if (!HistoricalMode && State != State.Realtime)
-                return;
+            // Skip historical bars unless HistoricalMode is enabled
+            // Check both State.Realtime AND State.Historical with IsFirstTickOfBar
+            // to handle cases where NT8 doesn't transition to Realtime cleanly
+            if (!HistoricalMode)
+            {
+                if (State == State.Historical)
+                    return;
+                // Also skip if we're not on the most recent bar
+                if (CurrentBar < Count - 2)
+                    return;
+            }
 
             // ─── COMPUTE DELTA ──────────────────────────────────────────
             double barDelta = barBuyVolume - barSellVolume;
