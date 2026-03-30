@@ -1232,6 +1232,7 @@
   let wizIndicators = []; // fetched from API
   let availableModels = [];
   let availableStrategies = [];
+  let availableInstruments = [];
   let wizardEditMode = false;
   let wizardEditBotId = null;
 
@@ -1323,6 +1324,7 @@ REASON: [one concise sentence]`;
     // Fetch available models and strategies
     try { availableModels = await (await fetch(`${BASE}/webhook/ai/models`)).json(); } catch(e) { availableModels = []; }
     try { availableStrategies = await (await fetch(`${BASE}/webhook/ai/strategies`)).json(); } catch(e) { availableStrategies = []; }
+    try { availableInstruments = await (await fetch(`${BASE}/instruments`)).json(); } catch(e) { availableInstruments = []; }
     el('wizardTitle').textContent = 'Create New Bot';
     el('wizDelete').style.display = 'none';
     el('wizardOverlay').classList.add('active');
@@ -1355,6 +1357,7 @@ REASON: [one concise sentence]`;
     } catch (e) {}
     try { availableModels = await (await fetch(`${BASE}/webhook/ai/models`)).json(); } catch(e) { availableModels = []; }
     try { availableStrategies = await (await fetch(`${BASE}/webhook/ai/strategies`)).json(); } catch(e) { availableStrategies = []; }
+    try { availableInstruments = await (await fetch(`${BASE}/instruments`)).json(); } catch(e) { availableInstruments = []; }
 
     // Parse config_json for instrument/qty/strategy params
     let configParams = {};
@@ -1483,7 +1486,9 @@ REASON: [one concise sentence]`;
         <div class="wiz-row">
           <div class="wiz-field">
             <label>Instrument</label>
-            <input type="text" id="wizInstrument" value="${wizData.instrument}" placeholder="e.g. MNQ1!, MGC1!, ES1!">
+            <select id="wizInstrument">
+              ${availableInstruments.map(i => `<option value="${i.symbol}" ${wizData.instrument === i.symbol || wizData.instrument === i.symbol + '1!' ? 'selected' : ''}>${i.symbol} — ${i.full_name}</option>`).join('')}
+            </select>
           </div>
           <div class="wiz-field">
             <label>Quantity</label>

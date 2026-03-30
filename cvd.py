@@ -333,6 +333,84 @@ def get_candles(instrument: str) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# NT8 DATA FEED (QTPDataFeed indicator — replaces/supplements CT WebSocket)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def process_nt8_tick(data: dict):
+    """Process incoming tick data from NinjaTrader QTPDataFeed indicator.
+
+    Expected payload:
+    {
+        "symbol": "MNQ 06-26",
+        "tag": "MNQ",
+        "tf": "1S",
+        "ts": 1711800000000,
+        "o": 23166.75, "h": 23167.00, "l": 23166.50, "c": 23166.75,
+        "v": 42,
+        "bid": 23166.50, "ask": 23166.75,
+        "buy_vol": 28, "sell_vol": 14,
+        "bar_delta": 14, "session_cvd": 1234,
+        "dom_bids": [[23166.50, 45], ...],
+        "dom_asks": [[23166.75, 38], ...]
+    }
+    """
+    instrument = data.get("symbol", "")
+    tag = data.get("tag", "")
+    if not instrument:
+        return
+
+    price = data.get("c", 0)
+    bid = data.get("bid", 0)
+    ask = data.get("ask", 0)
+    volume = data.get("v", 0)
+    bar_delta = data.get("bar_delta", 0)
+    session_cvd = data.get("session_cvd", 0)
+    buy_vol = data.get("buy_vol", 0)
+    sell_vol = data.get("sell_vol", 0)
+
+    if price <= 0:
+        return
+
+    # Track this instrument
+    _subscribed_instruments.add(instrument)
+
+    # Update CVD state (same structure as CT WebSocket)
+    if instrument not in _cvd_state:
+        _cvd_state[instrument] = {
+            "cvd": 0, "last": 0, "bid": 0, "ask": 0,
+            "volume": 0, "direction": "neutral", "delta_1s": 0,
+        }
+
+    state = _cvd_state[instrument]
+    state["last"] = price
+    state["bid"] = bid
+    state["ask"] = ask
+    state["volume"] = volume
+    state["cvd"] = session_cvd
+    state["delta_1s"] = bar_delta
+    state["direction"] = "buy" if bar_delta > 0 else "sell" if bar_delta < 0 else "neutral"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Store DOM data if present
+    if "dom_bids" in data:
+        state["dom_bids"] = data["dom_bids"]
+    if "dom_asks" in data:
+        state["dom_asks"] = data["dom_asks"]
+
+    # Update rolling history for metrics
+    history = _get_history(instrument)
+    history.append((time.time(), session_cvd, price))
+
+    # Update 1-min candle aggregation
+    _update_candle(instrument, price, bar_delta)
+
+
+def get_active_instruments() -> list[str]:
+    """Return list of instruments currently receiving data."""
+    return list(_subscribed_instruments)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # WEBSOCKET CLIENT
 # ══════════════════════════════════════════════════════════════════════════════
 

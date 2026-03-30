@@ -75,6 +75,41 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS master_instruments (
+            symbol TEXT PRIMARY KEY,
+            root TEXT NOT NULL,
+            full_name TEXT,
+            tick_size REAL NOT NULL,
+            point_value REAL NOT NULL,
+            exchange TEXT DEFAULT 'CME',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    # Seed default instruments if empty
+    existing = cursor.execute("SELECT COUNT(*) FROM master_instruments").fetchone()[0]
+    if existing == 0:
+        seed_instruments = [
+            ("MNQ", "MNQ", "Micro E-mini Nasdaq", 0.25, 2.0, "CME"),
+            ("NQ",  "NQ",  "E-mini Nasdaq",       0.25, 20.0, "CME"),
+            ("MES", "MES", "Micro E-mini S&P",    0.25, 5.0, "CME"),
+            ("ES",  "ES",  "E-mini S&P",          0.25, 50.0, "CME"),
+            ("MGC", "MGC", "Micro Gold",           0.10, 10.0, "COMEX"),
+            ("GC",  "GC",  "Gold",                 0.10, 100.0, "COMEX"),
+            ("MCL", "MCL", "Micro Crude Oil",      0.01, 100.0, "NYMEX"),
+            ("CL",  "CL",  "Crude Oil",            0.01, 1000.0, "NYMEX"),
+            ("M2K", "M2K", "Micro Russell 2000",   0.10, 5.0, "CME"),
+            ("RTY", "RTY", "E-mini Russell 2000",  0.10, 50.0, "CME"),
+            ("SIL", "SIL", "Micro Silver",         0.005, 5000.0, "COMEX"),
+            ("SI",  "SI",  "Silver",               0.005, 5000.0, "COMEX"),
+        ]
+        cursor.executemany(
+            "INSERT INTO master_instruments (symbol, root, full_name, tick_size, point_value, exchange) VALUES (?, ?, ?, ?, ?, ?)",
+            seed_instruments
+        )
+
     conn.commit()
     conn.close()
 
@@ -103,6 +138,25 @@ def get_all_settings() -> dict:
     rows = conn.execute("SELECT key, value FROM settings").fetchall()
     conn.close()
     return {r["key"]: r["value"] for r in rows}
+
+
+# --- Instrument operations ---
+
+def get_instruments(active_only: bool = True) -> list[dict]:
+    conn = get_connection()
+    if active_only:
+        rows = conn.execute("SELECT * FROM master_instruments WHERE active = 1 ORDER BY symbol").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM master_instruments ORDER BY symbol").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_instrument(symbol: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM master_instruments WHERE symbol = ?", (symbol.upper(),)).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 # --- User operations ---

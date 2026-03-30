@@ -604,6 +604,39 @@ async def nt_tables(request: Request, db_param: str = None):
 # AI GATE ROUTES (thin wrappers — logic lives in ai_gate.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
+@app.post("/webhook/data")
+async def webhook_data(request: Request):
+    """NT8 QTPDataFeed webhook — receives 1-second OHLCV + CVD + DOM data.
+    No auth required (high frequency, low latency).
+    """
+    body = await request.body()
+    body_text = body.decode("utf-8").strip()
+    if not body_text:
+        raise HTTPException(status_code=400, detail="Empty payload")
+    try:
+        data = json.loads(body_text)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    import cvd
+    cvd.process_nt8_tick(data)
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.get("/webhook/data/instruments")
+async def data_instruments():
+    """List instruments currently receiving data from NT8."""
+    import cvd
+    active = cvd.get_active_instruments()
+    return {"active": active, "master": db.get_instruments()}
+
+
+@app.get("/instruments")
+async def instruments_list():
+    """List all master instruments (for bot wizard dropdown)."""
+    return db.get_instruments()
+
+
 @app.post("/webhook/ai")
 async def webhook_ai(request: Request):
     """AI Gate webhook — receives bar data from Pine Script or TV strategy alerts.
