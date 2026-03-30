@@ -640,6 +640,9 @@ async def webhook_data(request: Request):
     symbol = data.get("symbol", "unknown")
     _data_feed_count[symbol] = _data_feed_count.get(symbol, 0) + 1
 
+    # DEBUG: log every tick (remove once confirmed working)
+    logger.info(f"Data feed tick: {symbol} c={data.get('c')} bid={data.get('bid')} ask={data.get('ask')} delta={data.get('bar_delta')} cvd={data.get('session_cvd')}")
+
     # Log summary every 30 seconds
     import time as _time
     now = _time.time()
