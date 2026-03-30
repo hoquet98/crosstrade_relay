@@ -1157,6 +1157,12 @@ async def cvd_chart_data(instrument: str, relay_id: str = None, limit: int = 240
     if not bars:
         bars = cvd.get_candles(instrument)
 
+    # Append current in-progress candle (updates every 5 seconds for live feel)
+    current = cvd._current_candle.get(instrument)
+    if current and current.get("close", 0) > 0:
+        bars = list(bars) if not isinstance(bars, list) else bars
+        bars.append(current)
+
     # Get trade markers from decision logs
     markers = []
     # Extract root symbol for matching: "MNQ JUN26" → "MNQ", "MNQ1!" → "MNQ"
