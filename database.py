@@ -88,6 +88,15 @@ def init_db():
         )
     """)
 
+    # Add rollover columns if missing
+    inst_cols = [r[1] for r in cursor.execute("PRAGMA table_info(master_instruments)").fetchall()]
+    if "current_contract" not in inst_cols:
+        cursor.execute("ALTER TABLE master_instruments ADD COLUMN current_contract TEXT")
+    if "roll_date" not in inst_cols:
+        cursor.execute("ALTER TABLE master_instruments ADD COLUMN roll_date TEXT")
+    if "expiry_date" not in inst_cols:
+        cursor.execute("ALTER TABLE master_instruments ADD COLUMN expiry_date TEXT")
+
     # Seed default instruments if empty
     existing = cursor.execute("SELECT COUNT(*) FROM master_instruments").fetchone()[0]
     if existing == 0:
@@ -109,6 +118,13 @@ def init_db():
             "INSERT INTO master_instruments (symbol, root, full_name, tick_size, point_value, exchange) VALUES (?, ?, ?, ?, ?, ?)",
             seed_instruments
         )
+        # Set current equity index contracts (Jun 2026)
+        equity_symbols = ("MNQ", "NQ", "MES", "ES", "M2K", "RTY")
+        for sym in equity_symbols:
+            cursor.execute(
+                "UPDATE master_instruments SET current_contract = 'JUN26', roll_date = '2026-06-15', expiry_date = '2026-06-18' WHERE symbol = ?",
+                (sym,)
+            )
 
     conn.commit()
     conn.close()
@@ -157,6 +173,20 @@ def get_instrument(symbol: str) -> dict | None:
     row = conn.execute("SELECT * FROM master_instruments WHERE symbol = ?", (symbol.upper(),)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def update_instrument(symbol: str, **kwargs):
+    """Update instrument fields (current_contract, roll_date, expiry_date, etc.)."""
+    allowed = {'current_contract', 'roll_date', 'expiry_date', 'active', 'tick_size', 'point_value'}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [symbol.upper()]
+    conn = get_connection()
+    conn.execute(f"UPDATE master_instruments SET {set_clause} WHERE symbol = ?", values)
+    conn.commit()
+    conn.close()
 
 
 # --- User operations ---

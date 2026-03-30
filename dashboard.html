@@ -483,6 +483,17 @@
     </div>
   </div>
 
+  <!-- Rollover Tracker -->
+  <div id="rolloverBar" style="
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 8px 20px; margin-bottom: 8px;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+    font-size: 11px; color: var(--text-dim);
+  ">
+    <span style="font-weight:600; color:var(--text);">Contracts:</span>
+    <span id="rolloverItems">Loading...</span>
+  </div>
+
   <!-- CVD Price Chart -->
   <div id="cvdChartContainer" style="
     margin-bottom: 16px;
@@ -1024,6 +1035,36 @@
       btn.textContent = 'Save';
     }
   }
+
+  // --- Rollover Tracker ---
+  async function fetchRollover() {
+    try {
+      const resp = await fetch(`${BASE}/instruments`);
+      const instruments = await resp.json();
+      const container = el('rolloverItems');
+      if (!instruments || instruments.length === 0) { container.textContent = 'No instruments'; return; }
+
+      const now = new Date();
+      const items = instruments
+        .filter(i => i.current_contract && i.roll_date)
+        .map(i => {
+          const roll = new Date(i.roll_date + 'T00:00:00');
+          const diff = Math.ceil((roll - now) / (1000 * 60 * 60 * 24));
+          let color = 'var(--text-dim)';
+          let badge = '';
+          if (diff <= 0) { color = '#ff1744'; badge = 'ROLLED'; }
+          else if (diff <= 7) { color = '#ff9800'; badge = `${diff}d`; }
+          else { color = '#00e676'; badge = `${diff}d`; }
+          return `<span style="display:inline-flex;align-items:center;gap:4px;">
+            <strong>${i.symbol}</strong> ${i.current_contract}
+            <span style="color:${color};font-weight:600;">${badge}</span>
+          </span>`;
+        });
+      container.innerHTML = items.join('<span style="color:var(--border);">|</span>');
+    } catch(e) {}
+  }
+  fetchRollover();
+  setInterval(fetchRollover, 60000); // refresh every minute
 
   // --- CVD Widget ---
   async function fetchCVD() {

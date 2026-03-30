@@ -668,6 +668,14 @@ async def instruments_list():
     return db.get_instruments()
 
 
+@app.put("/instruments/{symbol}")
+async def instruments_update(symbol: str, request: Request, _user: dict = Depends(verify_bearer)):
+    """Update instrument fields (roll date, current contract, etc.)."""
+    data = await request.json()
+    db.update_instrument(symbol, **data)
+    return {"status": "ok", "symbol": symbol}
+
+
 @app.post("/webhook/ai")
 async def webhook_ai(request: Request):
     """AI Gate webhook — receives bar data from Pine Script or TV strategy alerts.
