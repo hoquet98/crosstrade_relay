@@ -407,6 +407,26 @@ def purge_old_bars(days_1m: int = 14, days_5m: int = 60):
     conn.close()
 
 
+def cleanup_bad_bars():
+    """Delete bars with zero OHLC values (from connection drops)."""
+    init_db()
+    conn = db.get_connection()
+    deleted_1m = conn.execute("""
+        DELETE FROM ai_bars WHERE open = 0 OR high = 0 OR low = 0 OR close = 0
+        OR (open = high AND high = low AND low = close)
+    """).rowcount
+    deleted_5m = conn.execute("""
+        DELETE FROM ai_bars_5m WHERE open = 0 OR high = 0 OR low = 0 OR close = 0
+        OR (open = high AND high = low AND low = close)
+    """).rowcount
+    conn.commit()
+    conn.close()
+    total = deleted_1m + deleted_5m
+    if total > 0:
+        logger.info(f"Cleaned up {total} bad bars ({deleted_1m} 1m, {deleted_5m} 5m)")
+    return total
+
+
 def save_bar_5m(instrument: str, timestamp: str, o: float, h: float, l: float, c: float,
                 volume: float = 0, cvd: float = 0, cvd_delta: float = 0):
     """Save a completed 5-min bar to the database."""
@@ -1984,6 +2004,12 @@ async def stale_position_watchdog():
     while True:
         await asyncio.sleep(60)
         _watchdog_iter += 1
+        # Clean up bad bars every 5 minutes
+        if _watchdog_iter % 5 == 0:
+            try:
+                cleanup_bad_bars()
+            except Exception as e:
+                logger.error(f"Bad bar cleanup error: {e}")
         # Purge old bars every ~60 iterations (hourly)
         if _watchdog_iter % 60 == 0:
             try:
