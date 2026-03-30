@@ -408,16 +408,18 @@ def purge_old_bars(days_1m: int = 14, days_5m: int = 60):
 
 
 def cleanup_bad_bars():
-    """Delete bars with zero OHLC values (from connection drops)."""
+    """Delete bars with zero OHLC values (from connection drops only).
+
+    Does NOT delete flat bars (OHLC all equal) — those can be real
+    doji/thin bars during low-volume periods.
+    """
     init_db()
     conn = db.get_connection()
     deleted_1m = conn.execute("""
         DELETE FROM ai_bars WHERE open = 0 OR high = 0 OR low = 0 OR close = 0
-        OR (open = high AND high = low AND low = close)
     """).rowcount
     deleted_5m = conn.execute("""
         DELETE FROM ai_bars_5m WHERE open = 0 OR high = 0 OR low = 0 OR close = 0
-        OR (open = high AND high = low AND low = close)
     """).rowcount
     conn.commit()
     conn.close()
