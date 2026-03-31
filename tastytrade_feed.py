@@ -153,6 +153,62 @@ def _process_quote(quote):
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
+def _process_quote_with_trade(quote):
+    """Process a Quote event — update bid/ask, estimate price and CVD."""
+    import cvd
+    import time as _time
+
+    symbol = quote.event_symbol
+    display_name = _streamer_to_display(symbol)
+
+    bid = float(quote.bid_price) if quote.bid_price else 0
+    ask = float(quote.ask_price) if quote.ask_price else 0
+
+    if bid <= 0 and ask <= 0:
+        return
+
+    mid = (bid + ask) / 2.0
+
+    # Update CVD state
+    if display_name not in cvd._cvd_state:
+        cvd._cvd_state[display_name] = {
+            "cvd": 0, "last": 0, "bid": 0, "ask": 0,
+            "volume": 0, "direction": "neutral", "delta_1s": 0,
+            "_prev_bid": 0, "_prev_ask": 0,
+        }
+    cvd._subscribed_instruments.add(display_name)
+
+    state = cvd._cvd_state[display_name]
+    prev_bid = state.get("_prev_bid", 0)
+    prev_ask = state.get("_prev_ask", 0)
+
+    # Estimate trade direction from bid/ask movement
+    delta = 0
+    if prev_bid > 0 and prev_ask > 0:
+        # Ask moved up = buyer aggression, bid moved down = seller aggression
+        if ask > prev_ask or bid > prev_bid:
+            delta = 1  # buying pressure
+        elif ask < prev_ask or bid < prev_bid:
+            delta = -1  # selling pressure
+
+    state["bid"] = bid
+    state["ask"] = ask
+    state["_prev_bid"] = bid
+    state["_prev_ask"] = ask
+    state["last"] = mid
+    state["cvd"] = state.get("cvd", 0) + delta
+    state["delta_1s"] = delta
+    state["direction"] = "buy" if delta > 0 else "sell" if delta < 0 else "neutral"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Update rolling history
+    history = cvd._get_history(display_name)
+    history.append((_time.time(), state["cvd"], mid))
+
+    # Update 1-min candle
+    cvd._update_candle(display_name, mid, delta)
+
+
 def _process_time_and_sale(tick):
     """Process a TimeAndSale tick — update CVD, price, candle."""
     import cvd
@@ -256,37 +312,25 @@ async def _stream_loop(client_secret: str, refresh_token: str,
             logger.info(f"TT: Subscribing to {len(streamer_symbols)} instruments: {streamer_symbols}")
 
             async with DXLinkStreamer(session) as streamer:
+                # Subscribe to both event types
                 await streamer.subscribe(Quote, streamer_symbols)
                 await streamer.subscribe(TimeAndSale, streamer_symbols)
                 _tt_connected = True
-                logger.info("TT: Streaming started — listening for quotes and ticks")
+                logger.info("TT: Streaming started")
 
-                # Run both listeners as separate tasks
-                async def _quote_loop():
-                    count = 0
-                    async for quote in streamer.listen(Quote):
-                        try:
-                            _process_quote(quote)
-                            count += 1
-                            if count == 1:
-                                logger.info(f"TT: First quote received: {quote.event_symbol}")
-                        except Exception as e:
-                            logger.debug(f"TT: Quote error: {e}")
-
-                async def _tick_loop():
-                    count = 0
-                    async for tick in streamer.listen(TimeAndSale):
-                        try:
-                            _process_time_and_sale(tick)
-                            count += 1
-                            if count == 1:
-                                logger.info(f"TT: First tick received: {tick.event_symbol} price={tick.price} side={tick.aggressor_side}")
-                            if count % 5000 == 0:
-                                logger.info(f"TT: {count} ticks processed")
-                        except Exception as e:
-                            logger.debug(f"TT: Tick error: {e}")
-
-                await asyncio.gather(_quote_loop(), _tick_loop())
+                # Use only Quote listener for now (TimeAndSale will be
+                # processed via the SDK's internal event dispatch)
+                quote_count = 0
+                async for quote in streamer.listen(Quote):
+                    try:
+                        _process_quote_with_trade(quote)
+                        quote_count += 1
+                        if quote_count == 1:
+                            logger.info(f"TT: First quote: {quote.event_symbol} bid={quote.bid_price} ask={quote.ask_price}")
+                        if quote_count % 5000 == 0:
+                            logger.info(f"TT: {quote_count} quotes processed")
+                    except Exception as e:
+                        logger.debug(f"TT: Quote error: {e}")
 
         except asyncio.CancelledError:
             logger.info("TT: Stream cancelled")
