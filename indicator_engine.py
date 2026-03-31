@@ -475,6 +475,106 @@ def compute_all_indicators(instrument: str) -> dict:
     except Exception as e:
         logger.debug(f"Expanded indicator computation error: {e}")
 
+    # ══════════════════════════════════════════════════════════════════════
+    # INSTITUTIONAL QUALITY GATE FILTERS
+    # ══════════════════════════════════════════════════════════════════════
+
+    try:
+        # ── Filter 1: Squeeze Gate (BB/KC compression + EMA stack) ──
+        # Squeeze type: 3=High, 2=Mid, 1=Low, 0=None
+        sq_length = 13
+        sq_bb_upper = ind.ema(close, sq_length) + 2.0 * close.rolling(sq_length).std(ddof=0)
+        sq_kc_mid = ind.sma(close, sq_length)
+        tr_series = ind.true_range(high, low, close)
+        sq_kc_shift = ind.ema(tr_series, sq_length)
+
+        sq_delta_high = float(sq_bb_upper.iloc[-1]) - (float(sq_kc_mid.iloc[-1]) + float(sq_kc_shift.iloc[-1]) * 1.0)
+        sq_delta_mid = float(sq_bb_upper.iloc[-1]) - (float(sq_kc_mid.iloc[-1]) + float(sq_kc_shift.iloc[-1]) * 1.5)
+        sq_delta_low = float(sq_bb_upper.iloc[-1]) - (float(sq_kc_mid.iloc[-1]) + float(sq_kc_shift.iloc[-1]) * 2.0)
+
+        sq_type = 3 if sq_delta_high <= 0 else (2 if sq_delta_mid <= 0 else (1 if sq_delta_low <= 0 else 0))
+        result["squeeze_type"] = sq_type
+
+        # EMA stack (8/13/21)
+        sq_e8 = ind.ema(close, 8)
+        sq_e13 = ind.ema(close, 13)
+        sq_e21 = ind.ema(close, 21)
+
+        e8 = float(sq_e8.iloc[-1]) if not np.isnan(sq_e8.iloc[-1]) else 0
+        e13 = float(sq_e13.iloc[-1]) if not np.isnan(sq_e13.iloc[-1]) else 0
+        e21 = float(sq_e21.iloc[-1]) if not np.isnan(sq_e21.iloc[-1]) else 0
+        e13_prev = float(sq_e13.iloc[-2]) if len(sq_e13) > 1 and not np.isnan(sq_e13.iloc[-2]) else e13
+        e21_prev = float(sq_e21.iloc[-2]) if len(sq_e21) > 1 and not np.isnan(sq_e21.iloc[-2]) else e21
+
+        sq_ideal_bull = e8 > e13 and e13 > e21 and e13 > e13_prev and e21 > e21_prev and sq_type >= 2
+        sq_ideal_bear = e8 < e13 and e13 < e21 and e13 < e13_prev and e21 < e21_prev and sq_type >= 2
+
+        result["squeeze_ideal_bull"] = sq_ideal_bull
+        result["squeeze_ideal_bear"] = sq_ideal_bear
+        result["squeeze_gate_ok"] = sq_ideal_bull or sq_ideal_bear
+
+        # ── Filter 2: Vol Regime Gate (ATR percentile rank) ──
+        atr_series = ind.atr(high, low, close, 14)
+        if len(atr_series.dropna()) >= 100:
+            lookback = min(500, len(atr_series.dropna()))
+            recent_atr = atr_series.dropna().iloc[-lookback:]
+            current_atr = float(atr_series.iloc[-1])
+            vol_pctile = float((recent_atr < current_atr).sum()) / len(recent_atr) * 100
+        else:
+            vol_pctile = 50.0
+        result["vol_percentile"] = round(vol_pctile, 1)
+        result["vol_regime_adverse"] = vol_pctile >= 85.0
+
+        # ── Filter 3: VWAP Gate (session VWAP + direction) ──
+        # Compute session VWAP from today's bars
+        if len(today_bars) > 2:
+            hlc3 = (today_bars["high"] + today_bars["low"] + today_bars["close"]) / 3.0
+            vol = today_bars["volume"]
+            if float(vol.sum()) > 0:
+                cum_vol = vol.cumsum()
+                cum_vwap = (hlc3 * vol).cumsum()
+                vwap_val = float(cum_vwap.iloc[-1] / cum_vol.iloc[-1])
+                result["vwap_price"] = round(vwap_val, 2)
+                result["vwap_above"] = float(close.iloc[-1]) > vwap_val
+
+                # σ bands (standard deviation of price around VWAP)
+                vwap_series = cum_vwap / cum_vol
+                sq_diff = ((hlc3 - vwap_series) ** 2 * vol).cumsum() / cum_vol
+                vwap_std = float(np.sqrt(sq_diff.iloc[-1])) if not np.isnan(sq_diff.iloc[-1]) else 0
+                if vwap_std > 0:
+                    result["vwap_sigma_dist"] = round((float(close.iloc[-1]) - vwap_val) / vwap_std, 2)
+                    result["vwap_upper"] = round(vwap_val + 2.0 * vwap_std, 2)
+                    result["vwap_lower"] = round(vwap_val - 2.0 * vwap_std, 2)
+                    result["vwap_long_ok"] = float(close.iloc[-1]) > vwap_val and float(close.iloc[-1]) <= vwap_val + 2.0 * vwap_std
+                    result["vwap_short_ok"] = float(close.iloc[-1]) < vwap_val and float(close.iloc[-1]) >= vwap_val - 2.0 * vwap_std
+                else:
+                    result["vwap_sigma_dist"] = 0
+                    result["vwap_long_ok"] = float(close.iloc[-1]) > vwap_val
+                    result["vwap_short_ok"] = float(close.iloc[-1]) < vwap_val
+
+        # ── Filter 4: Delta Gate (from CVD bar delta) ──
+        # Get the latest bar's CVD delta from cvd module
+        try:
+            import cvd as _cvd
+            # Find the instrument in CVD state
+            for inst_name, state in _cvd._cvd_state.items():
+                if _extract_root(inst_name) == _extract_root(instrument):
+                    bar_delta = state.get("delta_1s", 0)
+                    result["bar_delta"] = bar_delta
+                    result["delta_bull"] = bar_delta > 0
+                    result["delta_bear"] = bar_delta < 0
+                    break
+        except Exception:
+            pass
+
+        # ── Filter 5: RVOL Gate ──
+        # vol_ratio already computed above
+        rvol_threshold = 1.0
+        result["rvol_ok"] = result.get("vol_ratio", 0) >= rvol_threshold
+
+    except Exception as e:
+        logger.debug(f"Institutional gate filter error: {e}")
+
     return result
 
 
