@@ -83,32 +83,45 @@ async def _resolve_contracts(session, product_codes: list[str]) -> dict[str, str
 # TICK PROCESSING
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Known futures product codes (longest first for matching)
+_PRODUCT_CODES = sorted(
+    ["MNQ", "NQ", "MES", "ES", "M2K", "RTY", "MGC", "GC", "MCL", "CL",
+     "SIL", "SI", "MHG", "HG"],
+    key=len, reverse=True
+)
+
+_MONTH_CODES = {'F': 'JAN', 'G': 'FEB', 'H': 'MAR', 'J': 'APR', 'K': 'MAY',
+                'M': 'JUN', 'N': 'JUL', 'Q': 'AUG', 'U': 'SEP', 'V': 'OCT',
+                'X': 'NOV', 'Z': 'DEC'}
+
+
 def _streamer_to_root(streamer_symbol: str) -> str:
     """Extract root from streamer symbol: '/MNQM26:XCME' -> 'MNQ'"""
-    s = streamer_symbol.lstrip("/")
+    s = streamer_symbol.lstrip("/").split(":")[0].upper()
+    # Match against known product codes (longest first)
+    for code in _PRODUCT_CODES:
+        if s.startswith(code):
+            return code
+    # Fallback: take alpha prefix
     root = ""
     for ch in s:
         if ch.isalpha():
             root += ch
         else:
             break
-    return root.upper()
+    return root
 
 
 def _streamer_to_display(streamer_symbol: str) -> str:
     """Convert streamer symbol to display name: '/MNQM26:XCME' -> 'MNQ JUN26'"""
-    # Map month codes to names
-    months = {'F': 'JAN', 'G': 'FEB', 'H': 'MAR', 'J': 'APR', 'K': 'MAY',
-              'M': 'JUN', 'N': 'JUL', 'Q': 'AUG', 'U': 'SEP', 'V': 'OCT',
-              'X': 'NOV', 'Z': 'DEC'}
-    s = streamer_symbol.lstrip("/").split(":")[0]
+    s = streamer_symbol.lstrip("/").split(":")[0].upper()
     root = _streamer_to_root(streamer_symbol)
-    # Extract month code and year from remainder
+    # Extract month code and year from remainder after root
     remainder = s[len(root):]  # e.g., "M26"
     if len(remainder) >= 2:
-        month_code = remainder[0].upper()
+        month_code = remainder[0]
         year = remainder[1:]
-        month_name = months.get(month_code, month_code)
+        month_name = _MONTH_CODES.get(month_code, month_code)
         return f"{root} {month_name}{year}"
     return root
 
