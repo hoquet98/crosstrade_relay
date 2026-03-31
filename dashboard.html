@@ -599,14 +599,7 @@
       <h3 id="wizardTitle">Create New Bot</h3>
       <button class="modal-close" onclick="closeWizard()">&times;</button>
     </div>
-    <div class="wizard-steps" id="wizardSteps">
-      <div class="wizard-step active" data-step="1"><div class="wizard-step-num">1</div> Config</div>
-      <div class="wizard-step" data-step="2"><div class="wizard-step-num">2</div> Gate Mode</div>
-      <div class="wizard-step" data-step="3" id="wizStepParams" style="display:none"><div class="wizard-step-num">3</div> Params</div>
-      <div class="wizard-step" data-step="4"><div class="wizard-step-num">4</div> Indicators</div>
-      <div class="wizard-step" data-step="5" id="wizStepEntryPrompt"><div class="wizard-step-num">5</div> Entry Prompt</div>
-      <div class="wizard-step" data-step="6" id="wizStepExitPrompt"><div class="wizard-step-num">6</div> Exit Prompt</div>
-    </div>
+    <div class="wizard-steps" id="wizardSteps"></div>
     <div class="wizard-body" id="wizardBody"></div>
     <div class="wizard-footer">
       <div class="wizard-footer-left">
@@ -1524,20 +1517,46 @@ REASON: [one concise sentence]`;
     el('wizardOverlay').classList.remove('active');
   }
 
+  // Dynamic step sequence based on gate mode
+  function _getStepSequence() {
+    const steps = ['config', 'gate_mode'];
+    const gate = wizData.gate_mode || 'ai_only';
+
+    if (gate === 'ai_only') {
+      if (wizData.mode === 'python') steps.push('params');
+      steps.push('indicators', 'entry_prompt', 'exit_prompt');
+    } else if (gate === 'conditions_only') {
+      if (wizData.mode === 'python') steps.push('params');
+      steps.push('entry_conditions', 'exit_conditions');
+    } else { // conditions_then_ai
+      if (wizData.mode === 'python') steps.push('params');
+      steps.push('entry_conditions', 'exit_conditions', 'indicators', 'entry_prompt', 'exit_prompt');
+    }
+    return steps;
+  }
+
+  const STEP_LABELS = {
+    config: 'Config', gate_mode: 'Gate Mode', params: 'Params',
+    entry_conditions: 'Entry Rules', exit_conditions: 'Exit Rules',
+    indicators: 'Indicators', entry_prompt: 'Entry Prompt', exit_prompt: 'Exit Prompt'
+  };
+
   function renderWizardStep() {
-    // Update step indicators
-    document.querySelectorAll('.wizard-step').forEach(s => {
-      const n = parseInt(s.dataset.step);
-      s.classList.remove('active', 'done');
-      if (n === wizStep) s.classList.add('active');
-      else if (n < wizStep) s.classList.add('done');
-    });
+    const sequence = _getStepSequence();
+    const currentStepName = sequence[wizStep - 1] || 'config';
+
+    // Render step tabs
+    const stepsContainer = el('wizardSteps');
+    stepsContainer.innerHTML = sequence.map((s, i) => {
+      const num = i + 1;
+      const cls = num === wizStep ? 'wizard-step active' : num < wizStep ? 'wizard-step done' : 'wizard-step';
+      return `<div class="${cls}" data-step="${num}"><div class="wizard-step-num">${num}</div> ${STEP_LABELS[s]}</div>`;
+    }).join('');
 
     const backBtn = el('wizBack');
     const nextBtn = el('wizNext');
     backBtn.style.visibility = wizStep === 1 ? 'hidden' : 'visible';
-    const lastStep = 6;
-    if (wizStep === lastStep) {
+    if (wizStep === sequence.length) {
       nextBtn.textContent = wizardEditMode ? 'Save Changes' : 'Create Bot';
     } else {
       nextBtn.textContent = 'Next';
@@ -1545,27 +1564,14 @@ REASON: [one concise sentence]`;
 
     const body = el('wizardBody');
 
-    // Show/hide conditional steps based on mode and gate
-    const paramsStep = el('wizStepParams');
-    if (paramsStep) paramsStep.style.display = wizData.mode === 'python' ? '' : 'none';
-    const entryPromptStep = el('wizStepEntryPrompt');
-    const exitPromptStep = el('wizStepExitPrompt');
-    if (entryPromptStep) entryPromptStep.style.display = wizData.gate_mode === 'conditions_only' ? 'none' : '';
-    if (exitPromptStep) exitPromptStep.style.display = wizData.gate_mode === 'conditions_only' ? 'none' : '';
-
-    if (wizStep === 1) {
-      renderStep1(body);
-    } else if (wizStep === 2) {
-      renderStepGateMode(body);
-    } else if (wizStep === 3) {
-      renderStepParams(body);
-    } else if (wizStep === 4) {
-      renderStep2(body);  // Indicators
-    } else if (wizStep === 5) {
-      renderStep3(body);  // Entry Prompt
-    } else if (wizStep === 6) {
-      renderStep4(body);  // Exit Prompt
-    }
+    if (currentStepName === 'config') renderStep1(body);
+    else if (currentStepName === 'gate_mode') renderStepGateMode(body);
+    else if (currentStepName === 'params') renderStepParams(body);
+    else if (currentStepName === 'entry_conditions') renderStepEntryConditions(body);
+    else if (currentStepName === 'exit_conditions') renderStepExitConditions(body);
+    else if (currentStepName === 'indicators') renderStep2(body);
+    else if (currentStepName === 'entry_prompt') renderStep3(body);
+    else if (currentStepName === 'exit_prompt') renderStep4(body);
   }
 
   function renderStep1(body) {
@@ -1684,65 +1690,117 @@ REASON: [one concise sentence]`;
     wizData.qty = parseInt(el('wizQty')?.value || '1') || 1;
   }
 
-  // ── Step 2: Gate Mode + Condition Builder ──
+  // ── Step 2: Gate Mode (simple selection) ──
   function renderStepGateMode(body) {
-    const isConditions = wizData.gate_mode !== 'ai_only';
-
-    // Build entry condition rows
-    const entryRows = (wizData.entry_conditions || []).map((c, i) => _conditionRow(c, i, 'entry')).join('');
-    const exitRows = (wizData.exit_conditions || []).map((c, i) => _conditionRow(c, i, 'exit')).join('');
-
     body.innerHTML = `
-      <div style="margin-bottom:16px;">
-        <label style="color:var(--text);font-weight:600;font-size:13px;">How should this bot gate trades?</label>
-        <div style="display:flex;gap:8px;margin-top:8px;">
-          <label style="display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid ${wizData.gate_mode === 'ai_only' ? 'var(--accent)' : 'var(--border)'};background:${wizData.gate_mode === 'ai_only' ? 'rgba(88,166,255,0.1)' : 'var(--bg)'};cursor:pointer;">
-            <input type="radio" name="gateMode" value="ai_only" ${wizData.gate_mode === 'ai_only' ? 'checked' : ''} onchange="document.querySelectorAll('[data-cond-section]').forEach(e=>e.style.display='none')">
-            <div><strong style="color:var(--text);">AI Only</strong><br><span style="color:var(--text-dim);font-size:11px;">LLM decides entry & exit</span></div>
+      <div>
+        <label style="color:var(--text);font-weight:600;font-size:14px;display:block;margin-bottom:12px;">How should this bot gate trades?</label>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <label style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-radius:8px;border:2px solid ${wizData.gate_mode === 'ai_only' ? 'var(--accent)' : '#222'};background:${wizData.gate_mode === 'ai_only' ? 'rgba(88,166,255,0.08)' : '#0d0d0d'};cursor:pointer;">
+            <input type="radio" name="gateMode" value="ai_only" ${wizData.gate_mode === 'ai_only' ? 'checked' : ''}>
+            <div>
+              <strong style="color:var(--text);font-size:13px;">AI Only</strong>
+              <div style="color:var(--text-dim);font-size:11px;margin-top:2px;">LLM evaluates every signal. Select indicators and write entry/exit prompts.</div>
+            </div>
           </label>
-          <label style="display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid ${wizData.gate_mode === 'conditions_only' ? '#00e676' : 'var(--border)'};background:${wizData.gate_mode === 'conditions_only' ? 'rgba(0,230,118,0.1)' : 'var(--bg)'};cursor:pointer;">
-            <input type="radio" name="gateMode" value="conditions_only" ${wizData.gate_mode === 'conditions_only' ? 'checked' : ''} onchange="document.querySelectorAll('[data-cond-section]').forEach(e=>e.style.display='block')">
-            <div><strong style="color:var(--text);">Conditions Only</strong><br><span style="color:var(--text-dim);font-size:11px;">Rules-based, no AI cost</span></div>
+          <label style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-radius:8px;border:2px solid ${wizData.gate_mode === 'conditions_only' ? '#00e676' : '#222'};background:${wizData.gate_mode === 'conditions_only' ? 'rgba(0,230,118,0.06)' : '#0d0d0d'};cursor:pointer;">
+            <input type="radio" name="gateMode" value="conditions_only" ${wizData.gate_mode === 'conditions_only' ? 'checked' : ''}>
+            <div>
+              <strong style="color:var(--text);font-size:13px;">Conditions Only</strong>
+              <div style="color:var(--text-dim);font-size:11px;margin-top:2px;">Rules-based gating with no AI cost. Define boolean conditions for entry and exit.</div>
+            </div>
           </label>
-          <label style="display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid ${wizData.gate_mode === 'conditions_then_ai' ? '#ff9800' : 'var(--border)'};background:${wizData.gate_mode === 'conditions_then_ai' ? 'rgba(255,152,0,0.1)' : 'var(--bg)'};cursor:pointer;">
-            <input type="radio" name="gateMode" value="conditions_then_ai" ${wizData.gate_mode === 'conditions_then_ai' ? 'checked' : ''} onchange="document.querySelectorAll('[data-cond-section]').forEach(e=>e.style.display='block')">
-            <div><strong style="color:var(--text);">Conditions + AI</strong><br><span style="color:var(--text-dim);font-size:11px;">Rules pre-filter, AI confirms</span></div>
+          <label style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-radius:8px;border:2px solid ${wizData.gate_mode === 'conditions_then_ai' ? '#ff9800' : '#222'};background:${wizData.gate_mode === 'conditions_then_ai' ? 'rgba(255,152,0,0.06)' : '#0d0d0d'};cursor:pointer;">
+            <input type="radio" name="gateMode" value="conditions_then_ai" ${wizData.gate_mode === 'conditions_then_ai' ? 'checked' : ''}>
+            <div>
+              <strong style="color:var(--text);font-size:13px;">Conditions + AI</strong>
+              <div style="color:var(--text-dim);font-size:11px;margin-top:2px;">Conditions pre-filter first (free), then AI confirms (saves cost on rejected signals).</div>
+            </div>
           </label>
-        </div>
-      </div>
-
-      <div data-cond-section style="display:${isConditions ? 'block' : 'none'};">
-        <div style="display:flex;gap:8px;margin-bottom:8px;">
-          <button class="wiz-btn wiz-btn-secondary" id="condViewForm" onclick="document.getElementById('condFormView').style.display='block';document.getElementById('condCodeView').style.display='none';" style="font-size:11px;">Form View</button>
-          <button class="wiz-btn wiz-btn-secondary" id="condViewCode" onclick="document.getElementById('condFormView').style.display='none';document.getElementById('condCodeView').style.display='block';" style="font-size:11px;">Code View</button>
-        </div>
-
-        <div id="condFormView">
-          <div style="margin-bottom:12px;">
-            <label style="color:#00e676;font-size:12px;font-weight:600;">ENTRY CONDITIONS</label>
-            <div id="entryCondRows">${entryRows}</div>
-            <button onclick="addConditionRow('entry')" style="margin-top:4px;padding:4px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Row</button>
-          </div>
-
-          <div>
-            <label style="color:#ff1744;font-size:12px;font-weight:600;">EXIT CONDITIONS</label>
-            <div id="exitCondRows">${exitRows}</div>
-            <button onclick="addConditionRow('exit')" style="margin-top:4px;padding:4px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Row</button>
-          </div>
-        </div>
-
-        <div id="condCodeView" style="display:none;">
-          <div style="margin-bottom:12px;">
-            <label style="color:#00e676;font-size:12px;font-weight:600;">ENTRY CONDITIONS (code)</label>
-            <textarea id="entryCondCode" style="min-height:60px;font-family:monospace;font-size:12px;" placeholder="rsi14 < 70 AND htf_bias == bullish">${_conditionsToText(wizData.entry_conditions)}</textarea>
-          </div>
-          <div>
-            <label style="color:#ff1744;font-size:12px;font-weight:600;">EXIT CONDITIONS (code)</label>
-            <textarea id="exitCondCode" style="min-height:60px;font-family:monospace;font-size:12px;" placeholder="exit_score >= 3 AND ticks_pnl > 20">${_conditionsToText(wizData.exit_conditions)}</textarea>
-          </div>
         </div>
       </div>
     `;
+  }
+
+  // ── Shared: Reference panel for condition code view ──
+  function _referencePanel(extraFields) {
+    const groups = [
+      {label:'Operators', color:'#58a6ff', items:['<','<=','>','>=','==','!=','AND','OR','NOT','in','between'], isOp:true},
+      {label:'Signals', color:'#3fb950', items:['bull_confluence','bear_confluence','long_signal','short_signal']},
+      {label:'Oscillators', color:'#d29922', items:['rsi14','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','wt1','williams_r','mfi14']},
+      {label:'Trend', color:'#f85149', items:['htf_bias','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','price_above_ema20','price_above_ema50','supertrend_bull','adx_trending','macd_bull','not_choppy']},
+      {label:'Volatility', color:'#56d364', items:['atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_squeeze_off','er_val']},
+      {label:'Session', color:'#79c0ff', items:['session_bucket','day_of_week','bar_time_hhmm','mins_to_maintenance']},
+      {label:'CVD', color:'#ff9800', items:['cvd_trend','cvd_divergence','cvd_1m_delta','cvd_5m_delta']},
+    ];
+    if (extraFields) groups.push(extraFields);
+
+    return `<div style="width:200px;max-height:350px;overflow-y:auto;background:#0a0a0a;border:1px solid #222;border-radius:6px;padding:8px;">
+      ${groups.map(g => `<div style="margin-bottom:6px;">
+        <div style="color:${g.color};font-size:10px;font-weight:600;text-transform:uppercase;margin-bottom:3px;">${g.label}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:2px;">
+          ${g.items.map(f => `<span onclick="_insertAtCursor('${f} ')" style="padding:${g.isOp?'2px 6px':'1px 5px'};background:${g.isOp?'#1a1a2e':'#111'};border:1px solid ${g.isOp?'#333':'#222'};border-radius:3px;color:${g.isOp?'#79c0ff':'#8b949e'};font-size:${g.isOp?'10':'9'}px;${g.isOp?'font-family:monospace;':''}cursor:pointer;">${f}</span>`).join('')}
+        </div>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  // ── Step: Entry Conditions ──
+  function renderStepEntryConditions(body) {
+    const rows = (wizData.entry_conditions || []).map((c, i) => _conditionRow(c, i, 'entry')).join('');
+    body.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormEntry').style.display='block';el('condCodeEntry').style.display='none';" style="font-size:11px;">Form View</button>
+        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormEntry').style.display='none';el('condCodeEntry').style.display='flex';" style="font-size:11px;">Code View</button>
+      </div>
+      <div id="condFormEntry">
+        <label style="display:block;color:#00e676;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Entry Conditions</label>
+        <div id="entryCondRows">${rows}</div>
+        <button onclick="addConditionRow('entry')" style="margin-top:6px;padding:5px 14px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Condition</button>
+      </div>
+      <div id="condCodeEntry" style="display:none;gap:12px;">
+        <div style="flex:1;">
+          <label style="display:block;color:#00e676;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Entry Conditions</label>
+          <textarea id="entryCondCode" style="display:block;width:100%;min-height:120px;padding:10px 12px;font-family:'Consolas',monospace;font-size:13px;line-height:1.5;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="rsi14 < 70 AND htf_bias == bullish&#10;AND session_bucket != midday_chop">${_conditionsToText(wizData.entry_conditions)}</textarea>
+        </div>
+        ${_referencePanel()}
+      </div>
+    `;
+  }
+
+  function saveStepEntryConditions() {
+    if (el('condFormEntry')?.style.display !== 'none') {
+      wizData.entry_conditions = _collectConditionRows('entry');
+    }
+  }
+
+  // ── Step: Exit Conditions ──
+  function renderStepExitConditions(body) {
+    const rows = (wizData.exit_conditions || []).map((c, i) => _conditionRow(c, i, 'exit')).join('');
+    body.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormExit').style.display='block';el('condCodeExit').style.display='none';" style="font-size:11px;">Form View</button>
+        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormExit').style.display='none';el('condCodeExit').style.display='flex';" style="font-size:11px;">Code View</button>
+      </div>
+      <div id="condFormExit">
+        <label style="display:block;color:#ff1744;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Exit Conditions</label>
+        <div id="exitCondRows">${rows}</div>
+        <button onclick="addConditionRow('exit')" style="margin-top:6px;padding:5px 14px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Condition</button>
+      </div>
+      <div id="condCodeExit" style="display:none;gap:12px;">
+        <div style="flex:1;">
+          <label style="display:block;color:#ff1744;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Exit Conditions</label>
+          <textarea id="exitCondCode" style="display:block;width:100%;min-height:120px;padding:10px 12px;font-family:'Consolas',monospace;font-size:13px;line-height:1.5;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="exit_score >= 3 AND ticks_pnl > 20&#10;OR zlema_flipped_bear == true">${_conditionsToText(wizData.exit_conditions)}</textarea>
+        </div>
+        ${_referencePanel({label:'Position', color:'#f85149', items:['exit_score','ticks_pnl','dollar_pnl','bars_in_trade']})}
+      </div>
+    `;
+  }
+
+  function saveStepExitConditions() {
+    if (el('condFormExit')?.style.display !== 'none') {
+      wizData.exit_conditions = _collectConditionRows('exit');
+    }
   }
 
   function _conditionRow(cond, index, type) {
@@ -1753,17 +1811,35 @@ REASON: [one concise sentence]`;
     const fields = ['rsi14','htf_bias','session_bucket','bull_confluence','bear_confluence','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','f_squeeze_off','wt1','er_val','price_above_ema20','price_above_ema50','cvd_trend','cvd_divergence','bar_time_hhmm','day_of_week','mins_to_maintenance','exit_score','ticks_pnl','dollar_pnl','bars_in_trade'];
     const ops = ['<','<=','>','>=','==','!=','in','between'];
     return `<div style="display:flex;gap:4px;align-items:center;margin-top:4px;" data-cond-row="${type}-${index}">
-      ${index > 0 ? `<select style="width:55px;padding:2px;background:var(--bg);border:1px solid var(--border);color:var(--accent);border-radius:3px;font-size:11px;" data-cond-logic="${type}"><option ${logic==='AND'?'selected':''}>AND</option><option ${logic==='OR'?'selected':''}>OR</option></select>` : '<span style="width:55px;"></span>'}
-      <select style="flex:1;padding:4px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;" data-cond-field="${type}">
-        <option value="">-- field --</option>
-        ${fields.map(f => `<option value="${f}" ${field===f?'selected':''}>${f}</option>`).join('')}
+      ${index > 0 ? `<select style="width:55px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#58a6ff;border-radius:3px;font-size:11px;" data-cond-logic="${type}"><option ${logic==='AND'?'selected':''}>AND</option><option ${logic==='OR'?'selected':''}>OR</option></select>` : '<span style="width:55px;"></span>'}
+      <select style="width:180px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-field="${type}">
+        <option value="" style="color:#8b949e;">-- field --</option>
+        ${fields.map(f => `<option value="${f}" style="color:#e6edf3;background:#0d0d0d;" ${field===f?'selected':''}>${f}</option>`).join('')}
       </select>
-      <select style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;" data-cond-op="${type}">
-        ${ops.map(o => `<option value="${o}" ${op===o?'selected':''}>${o}</option>`).join('')}
+      <select style="width:55px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-op="${type}">
+        ${ops.map(o => `<option value="${o}" style="color:#e6edf3;background:#0d0d0d;" ${op===o?'selected':''}>${o}</option>`).join('')}
       </select>
-      <input type="text" value="${value}" style="width:80px;padding:4px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;" data-cond-value="${type}" placeholder="value">
+      <input type="text" value="${value}" style="width:80px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-value="${type}" placeholder="value">
       <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#ff1744;cursor:pointer;font-size:14px;">×</button>
     </div>`;
+  }
+
+  // Track which textarea was last focused for click-to-insert
+  let _lastFocusedTextarea = null;
+  document.addEventListener('focusin', e => {
+    if (e.target.id === 'entryCondCode' || e.target.id === 'exitCondCode') {
+      _lastFocusedTextarea = e.target;
+    }
+  });
+
+  function _insertAtCursor(text) {
+    const ta = _lastFocusedTextarea || document.getElementById('entryCondCode');
+    if (!ta) return;
+    ta.focus();
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    ta.value = ta.value.substring(0, start) + text + ta.value.substring(end);
+    ta.selectionStart = ta.selectionEnd = start + text.length;
   }
 
   function addConditionRow(type) {
@@ -2065,59 +2141,51 @@ REASON: [one concise sentence]`;
     wizData.manage_prompt = el('wizManagePrompt')?.value || DEFAULT_MANAGE_PROMPT;
   }
 
+  function _saveCurrentStep() {
+    const sequence = _getStepSequence();
+    const stepName = sequence[wizStep - 1];
+    if (stepName === 'config') saveStep1();
+    else if (stepName === 'gate_mode') saveStepGateMode();
+    else if (stepName === 'params') saveStepParams();
+    else if (stepName === 'entry_conditions') saveStepEntryConditions();
+    else if (stepName === 'exit_conditions') saveStepExitConditions();
+    else if (stepName === 'entry_prompt') saveStep3();
+    else if (stepName === 'exit_prompt') saveStep4();
+  }
+
   function wizardBack() {
     if (wizStep <= 1) return;
-    if (wizStep === 2) saveStepGateMode();
-    if (wizStep === 3) saveStepParams();
-    if (wizStep === 5) saveStep3();
-    if (wizStep === 6) saveStep4();
+    _saveCurrentStep();
     wizStep--;
-    // Skip params step if not python mode
-    if (wizStep === 3 && wizData.mode !== 'python') wizStep--;
-    // Skip prompt steps if conditions_only
-    if (wizStep === 5 && wizData.gate_mode === 'conditions_only') wizStep = 4;
-    if (wizStep === 6 && wizData.gate_mode === 'conditions_only') wizStep = 4;
     renderWizardStep();
   }
 
   async function wizardNext() {
-    if (wizStep === 1) {
+    const sequence = _getStepSequence();
+    const stepName = sequence[wizStep - 1];
+
+    // Validate config step
+    if (stepName === 'config') {
       saveStep1();
       if (!wizData.bot_id) { alert('Bot ID is required'); return; }
       if (!wizData.account) { alert('Account is required'); return; }
       if (wizData.mode === 'copy' && !wizData.source_bot) { alert('Source Bot is required for copy mode'); return; }
       if (wizData.mode === 'python' && !wizData.strategy_name) { alert('Strategy is required for Python mode'); return; }
-      wizStep = 2; // Gate Mode
-      renderWizardStep();
-    } else if (wizStep === 2) {
-      saveStepGateMode();
-      // Skip to step 3 (params) for python, step 4 (indicators) otherwise
-      wizStep = wizData.mode === 'python' ? 3 : 4;
-      renderWizardStep();
-    } else if (wizStep === 3) {
-      saveStepParams();
-      wizStep = 4; // Indicators
-      renderWizardStep();
-    } else if (wizStep === 4) {
-      // Skip prompts for conditions_only
-      if (wizData.gate_mode === 'conditions_only') {
-        if (wizardEditMode) { await saveBot(); } else { await createBot(); }
-      } else {
-        wizStep = 5; // Entry Prompt
-        renderWizardStep();
-      }
-    } else if (wizStep === 5) {
-      saveStep3();
-      wizStep = 6; // Exit Prompt
-      renderWizardStep();
-    } else if (wizStep === 6) {
-      saveStep4();
-      if (wizardEditMode) {
-        await saveBot();
-      } else {
-        await createBot();
-      }
+    } else {
+      _saveCurrentStep();
     }
+
+    // Last step — save/create
+    if (wizStep === sequence.length) {
+      if (wizardEditMode) { await saveBot(); } else { await createBot(); }
+      return;
+    }
+
+    wizStep++;
+    // Recalculate sequence after gate_mode may have changed
+    const newSequence = _getStepSequence();
+    if (wizStep > newSequence.length) wizStep = newSequence.length;
+    renderWizardStep();
   }
 
   async function createBot() {
