@@ -219,6 +219,15 @@ async def _stream_loop(client_secret: str, refresh_token: str,
                 provider_secret=client_secret,
                 refresh_token=refresh_token,
             )
+            # Fix SSL cert verification on Windows
+            import ssl
+            try:
+                import certifi
+                os.environ['SSL_CERT_FILE'] = certifi.where()
+                logger.info(f"TT: SSL cert set to {certifi.where()}")
+            except ImportError:
+                logger.warning("TT: certifi not installed, SSL may fail")
+
             logger.info("TT: Session created, refreshing token...")
             await session.refresh(force=True)
             logger.info("TT: Session authenticated")
