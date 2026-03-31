@@ -1220,8 +1220,7 @@ async def admin_settings_get(_user: dict = Depends(verify_bearer)):
         "minimax_api_key": mask(settings.get("minimax_api_key", "") or os.environ.get("MINIMAX_API_KEY", "")),
         "tastytrade_client_id": settings.get("tastytrade_client_id", ""),
         "tastytrade_client_secret": mask(settings.get("tastytrade_client_secret", "")),
-        "tastytrade_username": settings.get("tastytrade_username", ""),
-        "tastytrade_password": mask(settings.get("tastytrade_password", "")),
+        "tastytrade_refresh_token": mask(settings.get("tastytrade_refresh_token", "")),
     }
 
 
@@ -1250,7 +1249,7 @@ async def admin_settings_update(request: Request, _user: dict = Depends(verify_b
     # Update API keys and credentials in settings table
     for key in ("anthropic_api_key", "minimax_api_key",
                 "tastytrade_client_id", "tastytrade_client_secret",
-                "tastytrade_username", "tastytrade_password"):
+                "tastytrade_refresh_token"):
         val = data.get(key, "")
         if val and not val.startswith("****"):
             db.set_setting(key, val)

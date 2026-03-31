@@ -999,15 +999,9 @@
               <input type="password" id="sTTClientSecret" value="${s.tastytrade_client_secret || ''}" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;">
             </div>
           </div>
-          <div style="display:flex;gap:10px;">
-            <div style="flex:1;">
-              <label style="color:var(--text-dim);font-size:12px;">Username / Email</label>
-              <input type="text" id="sTTUsername" value="${s.tastytrade_username || ''}" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;">
-            </div>
-            <div style="flex:1;">
-              <label style="color:var(--text-dim);font-size:12px;">Password</label>
-              <input type="password" id="sTTPassword" value="${s.tastytrade_password || ''}" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;">
-            </div>
+          <div>
+            <label style="color:var(--text-dim);font-size:12px;">Refresh Token (from OAuth Applications → Manage → Create Grant)</label>
+            <input type="password" id="sTTRefreshToken" value="${s.tastytrade_refresh_token || ''}" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;">
           </div>
         </div>
       `;
@@ -1037,8 +1031,7 @@
         minimax_api_key: el('sMiniMaxKey')?.value || '',
         tastytrade_client_id: el('sTTClientId')?.value || '',
         tastytrade_client_secret: el('sTTClientSecret')?.value || '',
-        tastytrade_username: el('sTTUsername')?.value || '',
-        tastytrade_password: el('sTTPassword')?.value || '',
+        tastytrade_refresh_token: el('sTTRefreshToken')?.value || '',
       };
       const resp = await fetch(`${BASE}/admin/settings`, {
         method: 'PUT',
