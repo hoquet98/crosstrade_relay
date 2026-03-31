@@ -866,6 +866,9 @@ async def ai_bots_create(request: Request, _user: dict = Depends(verify_bearer))
         strategy_name=data.get("strategy_name"), config_json=data.get("config_json"),
         relay_user=data.get("relay_user", "titon"),
         ai_model=data.get("ai_model"),
+        gate_mode=data.get("gate_mode", "ai_only"),
+        entry_conditions=data.get("entry_conditions"),
+        exit_conditions=data.get("exit_conditions"),
     )
     return {"status": "ok", "bot_id": data["bot_id"]}
 

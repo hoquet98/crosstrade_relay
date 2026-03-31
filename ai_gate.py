@@ -15,6 +15,7 @@ import httpx
 
 import database as db
 import indicator_engine
+import condition_engine
 
 logger = logging.getLogger("trade_relay")
 
@@ -289,6 +290,32 @@ def init_db():
         conn.execute("ALTER TABLE ai_bots ADD COLUMN relay_user TEXT DEFAULT 'titon'")
     if "ai_model" not in bot_cols:
         conn.execute(f"ALTER TABLE ai_bots ADD COLUMN ai_model TEXT DEFAULT '{DEFAULT_AI_MODEL}'")
+    if "gate_mode" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN gate_mode TEXT DEFAULT 'ai_only'")
+    if "entry_conditions" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN entry_conditions TEXT")
+    if "exit_conditions" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN exit_conditions TEXT")
+
+    # Add entry_snapshot to ai_trades
+    trade_cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_trades)").fetchall()]
+    if "entry_snapshot" not in trade_cols:
+        conn.execute("ALTER TABLE ai_trades ADD COLUMN entry_snapshot TEXT")
+
+    # AI Reviews table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot_id TEXT NOT NULL,
+            review_type TEXT NOT NULL DEFAULT 'on_demand',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            trade_count INTEGER,
+            win_rate REAL,
+            total_pnl REAL,
+            analysis TEXT,
+            recommendations TEXT
+        )
+    """)
 
     # Strategy indicator registry
     conn.execute("""
@@ -719,7 +746,9 @@ def add_bot(bot_id: str, mode: str, account: str, strategy_tag: str,
             source_bot: str = None, relay_id: str = None,
             entry_prompt: str = None, manage_prompt: str = None,
             strategy_name: str = None, config_json: str = None,
-            relay_user: str = "titon", ai_model: str = None):
+            relay_user: str = "titon", ai_model: str = None,
+            gate_mode: str = "ai_only", entry_conditions: str = None,
+            exit_conditions: str = None):
     init_db()
     if ai_model is None:
         ai_model = DEFAULT_AI_MODEL
@@ -727,8 +756,9 @@ def add_bot(bot_id: str, mode: str, account: str, strategy_tag: str,
     conn.execute("""
         INSERT INTO ai_bots (bot_id, mode, source_bot, relay_id, account,
                              strategy_tag, entry_prompt, manage_prompt,
-                             strategy_name, config_json, relay_user, ai_model)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             strategy_name, config_json, relay_user, ai_model,
+                             gate_mode, entry_conditions, exit_conditions)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(bot_id) DO UPDATE SET
             mode = excluded.mode, source_bot = excluded.source_bot,
             relay_id = excluded.relay_id, account = excluded.account,
@@ -738,9 +768,13 @@ def add_bot(bot_id: str, mode: str, account: str, strategy_tag: str,
             strategy_name = excluded.strategy_name,
             config_json = excluded.config_json,
             relay_user = excluded.relay_user,
-            ai_model = excluded.ai_model
+            ai_model = excluded.ai_model,
+            gate_mode = excluded.gate_mode,
+            entry_conditions = excluded.entry_conditions,
+            exit_conditions = excluded.exit_conditions
     """, (bot_id, mode, source_bot, relay_id, account, strategy_tag,
-          entry_prompt, manage_prompt, strategy_name, config_json, relay_user, ai_model))
+          entry_prompt, manage_prompt, strategy_name, config_json, relay_user, ai_model,
+          gate_mode, entry_conditions, exit_conditions))
     conn.commit()
     conn.close()
 
@@ -773,7 +807,8 @@ def update_bot(bot_id: str, **kwargs):
     """Update specific fields on a bot config."""
     init_db()
     allowed = {'mode', 'source_bot', 'relay_id', 'account', 'strategy_tag',
-               'entry_prompt', 'manage_prompt', 'enabled', 'ai_model'}
+               'entry_prompt', 'manage_prompt', 'enabled', 'ai_model',
+               'gate_mode', 'entry_conditions', 'exit_conditions'}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return
@@ -904,18 +939,19 @@ def list_positions(relay_user: str = None) -> list[dict]:
 
 def _open_trade(relay_user: str, relay_id: str, account: str,
                 instrument: str, strategy: str, direction: str,
-                entry_price: float) -> int:
+                entry_price: float, entry_snapshot: dict = None) -> int:
     init_db()
     spec = get_instrument_spec(instrument)
+    snapshot_json = json.dumps(entry_snapshot) if entry_snapshot else None
     conn = db.get_connection()
     now = datetime.now(timezone.utc).isoformat()
     cursor = conn.execute("""
         INSERT INTO ai_trades
             (relay_user, relay_id, account, instrument, strategy,
-             direction, entry_price, tick_value, opened_at, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+             direction, entry_price, tick_value, opened_at, status, entry_snapshot)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
     """, (relay_user, relay_id, account, instrument, strategy,
-          direction, entry_price, spec["point_value"], now))
+          direction, entry_price, spec["point_value"], now, snapshot_json))
     trade_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -1747,13 +1783,58 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
 
             if long_sig or short_sig:
                 direction = "long" if long_sig else "short"
-                await _handle_entry(filtered_payload, body_text, direction,
-                                    entry_prompt=entry_prompt, ai_model=model)
+                gate = bot.get("gate_mode", "ai_only") if bot else "ai_only"
+                entry_conds = bot.get("entry_conditions") if bot else None
+
+                if gate == "conditions_only":
+                    # Pure conditional gate — no AI call
+                    if condition_engine.evaluate_conditions(entry_conds, enriched_payload):
+                        await _handle_entry(filtered_payload, body_text, direction,
+                                            entry_prompt=entry_prompt, ai_model=model,
+                                            skip_ai=True)
+                    else:
+                        logger.info(f"[{relay_user}/{relay_id}] Condition gate REJECTED {direction.upper()}")
+                        _log_decision(
+                            relay_user=relay_user, relay_id=relay_id,
+                            account=account, instrument=instrument,
+                            signal=direction.upper(),
+                            strategy=filtered_payload.get("strategy", "unknown"),
+                            confluence_score=filtered_payload.get("bull_confluence" if direction == "long" else "bear_confluence", 0),
+                            ai_decision="CONDITION_REJECT", ai_reason="Entry conditions not met",
+                            ai_latency_ms=0, relay_result="condition_rejected",
+                            relay_details="Conditional gate rejected entry",
+                            payload_json=body_text, alert_type="entry"
+                        )
+                elif gate == "conditions_then_ai":
+                    # Conditional pre-filter, then AI confirms
+                    if condition_engine.evaluate_conditions(entry_conds, enriched_payload):
+                        await _handle_entry(filtered_payload, body_text, direction,
+                                            entry_prompt=entry_prompt, ai_model=model)
+                    else:
+                        logger.info(f"[{relay_user}/{relay_id}] Condition pre-filter REJECTED {direction.upper()} (skipped AI)")
+                        _log_decision(
+                            relay_user=relay_user, relay_id=relay_id,
+                            account=account, instrument=instrument,
+                            signal=direction.upper(),
+                            strategy=filtered_payload.get("strategy", "unknown"),
+                            confluence_score=filtered_payload.get("bull_confluence" if direction == "long" else "bear_confluence", 0),
+                            ai_decision="CONDITION_REJECT", ai_reason="Pre-filter conditions not met (AI skipped)",
+                            ai_latency_ms=0, relay_result="condition_rejected",
+                            relay_details="Conditional pre-filter rejected — AI call saved",
+                            payload_json=body_text, alert_type="entry"
+                        )
+                else:
+                    # ai_only — current behavior
+                    await _handle_entry(filtered_payload, body_text, direction,
+                                        entry_prompt=entry_prompt, ai_model=model)
             # else: flat, no signal — nothing to do
         else:
             # === IN POSITION — manage ===
+            gate = bot.get("gate_mode", "ai_only") if bot else "ai_only"
             await _handle_manage(filtered_payload, body_text, position,
-                                 manage_prompt=manage_prompt, ai_model=model)
+                                 manage_prompt=manage_prompt, ai_model=model,
+                                 gate_mode=gate,
+                                 exit_conditions=bot.get("exit_conditions") if bot else None)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1761,8 +1842,9 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _handle_entry(payload: dict, body_text: str, direction: str,
-                        entry_prompt: str = None, ai_model: str = None):
-    """Flat + signal detected. Ask AI whether to enter."""
+                        entry_prompt: str = None, ai_model: str = None,
+                        skip_ai: bool = False):
+    """Flat + signal detected. Ask AI whether to enter (or skip AI for conditions_only)."""
     relay_user = payload["relay_user"]
     relay_id = payload["relay_id"]
     account = payload["account"]
@@ -1770,14 +1852,21 @@ async def _handle_entry(payload: dict, body_text: str, direction: str,
     strategy = payload.get("strategy", "unknown")
     confluence = payload.get("bull_confluence" if direction == "long" else "bear_confluence", 0)
 
-    logger.info(f"[{relay_user}/{relay_id}] Signal: {direction.upper()} {instrument} (confluence {confluence}) [model={ai_model}]")
+    logger.info(f"[{relay_user}/{relay_id}] Signal: {direction.upper()} {instrument} (confluence {confluence}) [model={ai_model}] [skip_ai={skip_ai}]")
 
-    # Call AI for entry decision (use custom prompt if provided)
-    user_msg = _build_entry_message(payload)
-    prompt = entry_prompt or AI_ENTRY_PROMPT
-    ai_decision, ai_reason, ai_latency_ms, ai_raw = await _call_anthropic(
-        user_msg, prompt, model_id=ai_model
-    )
+    if skip_ai:
+        # Conditions-only mode — no AI call
+        ai_decision = "AGREE"
+        ai_reason = "Conditional gate passed — AI skipped"
+        ai_latency_ms = 0
+        ai_raw = ""
+    else:
+        # Call AI for entry decision (use custom prompt if provided)
+        user_msg = _build_entry_message(payload)
+        prompt = entry_prompt or AI_ENTRY_PROMPT
+        ai_decision, ai_reason, ai_latency_ms, ai_raw = await _call_anthropic(
+            user_msg, prompt, model_id=ai_model
+        )
 
     logger.info(f"[{relay_user}/{relay_id}] AI: {ai_decision} ({ai_latency_ms}ms) — {ai_reason}")
 
@@ -1788,11 +1877,11 @@ async def _handle_entry(payload: dict, body_text: str, direction: str,
         entry_price = payload.get("close", payload.get("price", 0))
         spec = get_instrument_spec(instrument)
 
-        # Open position + trade record
+        # Open position + trade record (capture full indicator snapshot)
         _set_position(relay_user, relay_id, account, instrument,
                       direction, entry_price, spec["point_value"], strategy)
         _open_trade(relay_user, relay_id, account, instrument, strategy,
-                    direction, entry_price)
+                    direction, entry_price, entry_snapshot=payload)
 
         if AI_DRY_RUN:
             relay_result = "dry_run"
@@ -1845,8 +1934,9 @@ async def _handle_entry(payload: dict, body_text: str, direction: str,
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _handle_manage(payload: dict, body_text: str, position: dict,
-                         manage_prompt: str = None, ai_model: str = None):
-    """In position. Compute P&L, exit score, check safety nets, maybe call AI."""
+                         manage_prompt: str = None, ai_model: str = None,
+                         gate_mode: str = "ai_only", exit_conditions: str = None):
+    """In position. Compute P&L, exit score, check safety nets, maybe call AI or conditions."""
     relay_user = position["relay_user"]
     relay_id = position["relay_id"]
     account = position["account"]
@@ -1942,6 +2032,30 @@ async def _handle_manage(payload: dict, body_text: str, position: dict,
             alert_type="manage"
         )
         return
+
+    # --- Conditional exit gate (before AI) ---
+    if exit_conditions:
+        exit_context = {**payload, "ticks_pnl": ticks_pnl, "dollar_pnl": dollar_pnl,
+                        "exit_score": exit_score, "bars_in_trade": bar_count}
+        if condition_engine.evaluate_conditions(exit_conditions, exit_context):
+            if gate_mode == "conditions_only":
+                reason = f"Conditional exit: conditions met (score={exit_score}, pnl={ticks_pnl:.1f}t)"
+                await _force_close(position, current_price, reason, payload)
+                _log_decision(
+                    relay_user=relay_user, relay_id=relay_id,
+                    account=account, instrument=instrument,
+                    signal="EXIT", strategy=strategy, confluence_score=exit_score,
+                    ai_decision="CONDITION_EXIT", ai_reason=reason,
+                    ai_latency_ms=0, relay_result="condition_exit",
+                    relay_details=reason, payload_json=body_text,
+                    alert_type="manage"
+                )
+                return
+            # conditions_then_ai: conditions say exit, let AI confirm below
+
+    # --- For conditions_only mode, if exit conditions didn't trigger, just hold ---
+    if gate_mode == "conditions_only":
+        return  # No AI calls in conditions_only mode
 
     # --- API cost gate: should we call AI this bar? ---
     if not _should_call_ai_manage(exit_score, bar_count, ticks_pnl, prev_tier):
