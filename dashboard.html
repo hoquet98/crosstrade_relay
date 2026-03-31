@@ -601,10 +601,11 @@
     </div>
     <div class="wizard-steps" id="wizardSteps">
       <div class="wizard-step active" data-step="1"><div class="wizard-step-num">1</div> Config</div>
-      <div class="wizard-step" data-step="2" id="wizStepParams" style="display:none"><div class="wizard-step-num">2</div> Params</div>
-      <div class="wizard-step" data-step="3"><div class="wizard-step-num">3</div> Indicators</div>
-      <div class="wizard-step" data-step="4"><div class="wizard-step-num">4</div> Entry Prompt</div>
-      <div class="wizard-step" data-step="5"><div class="wizard-step-num">5</div> Exit Prompt</div>
+      <div class="wizard-step" data-step="2"><div class="wizard-step-num">2</div> Gate Mode</div>
+      <div class="wizard-step" data-step="3" id="wizStepParams" style="display:none"><div class="wizard-step-num">3</div> Params</div>
+      <div class="wizard-step" data-step="4"><div class="wizard-step-num">4</div> Indicators</div>
+      <div class="wizard-step" data-step="5" id="wizStepEntryPrompt"><div class="wizard-step-num">5</div> Entry Prompt</div>
+      <div class="wizard-step" data-step="6" id="wizStepExitPrompt"><div class="wizard-step-num">6</div> Exit Prompt</div>
     </div>
     <div class="wizard-body" id="wizardBody"></div>
     <div class="wizard-footer">
@@ -1339,7 +1340,7 @@
   // ══════════════════════════════════════════════════════════════════════════
 
   let wizStep = 1;
-  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', strategy_name: '', instrument: 'MNQ1!', qty: 1, indicators: {}, entry_prompt: '', manage_prompt: '' };
+  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', strategy_name: '', instrument: 'MNQ', qty: 1, gate_mode: 'ai_only', entry_conditions: [], exit_conditions: [], indicators: {}, entry_prompt: '', manage_prompt: '' };
   let wizIndicators = []; // fetched from API
   let availableModels = [];
   let availableStrategies = [];
@@ -1496,12 +1497,22 @@ REASON: [one concise sentence]`;
       strategy_tag: bot.strategy_tag || 'AIGate',
       ai_model: bot.ai_model || '',
       strategy_name: bot.strategy_name || '',
-      instrument: configParams.instrument || 'MNQ1!',
+      instrument: configParams.instrument || 'MNQ',
       qty: configParams.qty || 1,
+      gate_mode: bot.gate_mode || 'ai_only',
+      entry_conditions: bot.entry_conditions ? (typeof bot.entry_conditions === 'string' ? _ruleTreeToRows(JSON.parse(bot.entry_conditions)) : []) : [],
+      exit_conditions: bot.exit_conditions ? (typeof bot.exit_conditions === 'string' ? _ruleTreeToRows(JSON.parse(bot.exit_conditions)) : []) : [],
       indicators: indicators,
       entry_prompt: bot.entry_prompt || DEFAULT_ENTRY_PROMPT,
       manage_prompt: bot.manage_prompt || DEFAULT_MANAGE_PROMPT,
     };
+
+    function _ruleTreeToRows(tree) {
+      if (!tree) return [];
+      if (tree.field) return [{ field: tree.field, op: tree.op, value: tree.value, logic: 'AND' }];
+      if (tree.conditions) return tree.conditions.map((c, i) => ({ field: c.field, op: c.op, value: c.value, logic: i === 0 ? 'AND' : (tree.op || 'AND') }));
+      return [];
+    }
 
     el('wizardTitle').textContent = 'Edit Bot';
     el('wizDelete').style.display = 'inline-block';
@@ -1525,7 +1536,7 @@ REASON: [one concise sentence]`;
     const backBtn = el('wizBack');
     const nextBtn = el('wizNext');
     backBtn.style.visibility = wizStep === 1 ? 'hidden' : 'visible';
-    const lastStep = 5;
+    const lastStep = 6;
     if (wizStep === lastStep) {
       nextBtn.textContent = wizardEditMode ? 'Save Changes' : 'Create Bot';
     } else {
@@ -1534,20 +1545,26 @@ REASON: [one concise sentence]`;
 
     const body = el('wizardBody');
 
-    // Show/hide params step based on mode
+    // Show/hide conditional steps based on mode and gate
     const paramsStep = el('wizStepParams');
     if (paramsStep) paramsStep.style.display = wizData.mode === 'python' ? '' : 'none';
+    const entryPromptStep = el('wizStepEntryPrompt');
+    const exitPromptStep = el('wizStepExitPrompt');
+    if (entryPromptStep) entryPromptStep.style.display = wizData.gate_mode === 'conditions_only' ? 'none' : '';
+    if (exitPromptStep) exitPromptStep.style.display = wizData.gate_mode === 'conditions_only' ? 'none' : '';
 
     if (wizStep === 1) {
       renderStep1(body);
     } else if (wizStep === 2) {
-      renderStepParams(body);
+      renderStepGateMode(body);
     } else if (wizStep === 3) {
-      renderStep2(body);
+      renderStepParams(body);
     } else if (wizStep === 4) {
-      renderStep3(body);
+      renderStep2(body);  // Indicators
     } else if (wizStep === 5) {
-      renderStep4(body);
+      renderStep3(body);  // Entry Prompt
+    } else if (wizStep === 6) {
+      renderStep4(body);  // Exit Prompt
     }
   }
 
@@ -1663,8 +1680,146 @@ REASON: [one concise sentence]`;
     wizData.strategy_tag = (el('wizStrategyTag')?.value || 'AIGate').trim();
     wizData.ai_model = el('wizAiModel')?.value || '';
     wizData.strategy_name = el('wizStrategyName')?.value || '';
-    wizData.instrument = (el('wizInstrument')?.value || 'MNQ1!').trim();
+    wizData.instrument = (el('wizInstrument')?.value || 'MNQ').trim();
     wizData.qty = parseInt(el('wizQty')?.value || '1') || 1;
+  }
+
+  // ── Step 2: Gate Mode + Condition Builder ──
+  function renderStepGateMode(body) {
+    const isConditions = wizData.gate_mode !== 'ai_only';
+
+    // Build entry condition rows
+    const entryRows = (wizData.entry_conditions || []).map((c, i) => _conditionRow(c, i, 'entry')).join('');
+    const exitRows = (wizData.exit_conditions || []).map((c, i) => _conditionRow(c, i, 'exit')).join('');
+
+    body.innerHTML = `
+      <div style="margin-bottom:16px;">
+        <label style="color:var(--text);font-weight:600;font-size:13px;">How should this bot gate trades?</label>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <label style="display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid ${wizData.gate_mode === 'ai_only' ? 'var(--accent)' : 'var(--border)'};background:${wizData.gate_mode === 'ai_only' ? 'rgba(88,166,255,0.1)' : 'var(--bg)'};cursor:pointer;">
+            <input type="radio" name="gateMode" value="ai_only" ${wizData.gate_mode === 'ai_only' ? 'checked' : ''} onchange="document.querySelectorAll('[data-cond-section]').forEach(e=>e.style.display='none')">
+            <div><strong style="color:var(--text);">AI Only</strong><br><span style="color:var(--text-dim);font-size:11px;">LLM decides entry & exit</span></div>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid ${wizData.gate_mode === 'conditions_only' ? '#00e676' : 'var(--border)'};background:${wizData.gate_mode === 'conditions_only' ? 'rgba(0,230,118,0.1)' : 'var(--bg)'};cursor:pointer;">
+            <input type="radio" name="gateMode" value="conditions_only" ${wizData.gate_mode === 'conditions_only' ? 'checked' : ''} onchange="document.querySelectorAll('[data-cond-section]').forEach(e=>e.style.display='block')">
+            <div><strong style="color:var(--text);">Conditions Only</strong><br><span style="color:var(--text-dim);font-size:11px;">Rules-based, no AI cost</span></div>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid ${wizData.gate_mode === 'conditions_then_ai' ? '#ff9800' : 'var(--border)'};background:${wizData.gate_mode === 'conditions_then_ai' ? 'rgba(255,152,0,0.1)' : 'var(--bg)'};cursor:pointer;">
+            <input type="radio" name="gateMode" value="conditions_then_ai" ${wizData.gate_mode === 'conditions_then_ai' ? 'checked' : ''} onchange="document.querySelectorAll('[data-cond-section]').forEach(e=>e.style.display='block')">
+            <div><strong style="color:var(--text);">Conditions + AI</strong><br><span style="color:var(--text-dim);font-size:11px;">Rules pre-filter, AI confirms</span></div>
+          </label>
+        </div>
+      </div>
+
+      <div data-cond-section style="display:${isConditions ? 'block' : 'none'};">
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <button class="wiz-btn wiz-btn-secondary" id="condViewForm" onclick="document.getElementById('condFormView').style.display='block';document.getElementById('condCodeView').style.display='none';" style="font-size:11px;">Form View</button>
+          <button class="wiz-btn wiz-btn-secondary" id="condViewCode" onclick="document.getElementById('condFormView').style.display='none';document.getElementById('condCodeView').style.display='block';" style="font-size:11px;">Code View</button>
+        </div>
+
+        <div id="condFormView">
+          <div style="margin-bottom:12px;">
+            <label style="color:#00e676;font-size:12px;font-weight:600;">ENTRY CONDITIONS</label>
+            <div id="entryCondRows">${entryRows}</div>
+            <button onclick="addConditionRow('entry')" style="margin-top:4px;padding:4px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Row</button>
+          </div>
+
+          <div>
+            <label style="color:#ff1744;font-size:12px;font-weight:600;">EXIT CONDITIONS</label>
+            <div id="exitCondRows">${exitRows}</div>
+            <button onclick="addConditionRow('exit')" style="margin-top:4px;padding:4px 12px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Row</button>
+          </div>
+        </div>
+
+        <div id="condCodeView" style="display:none;">
+          <div style="margin-bottom:12px;">
+            <label style="color:#00e676;font-size:12px;font-weight:600;">ENTRY CONDITIONS (code)</label>
+            <textarea id="entryCondCode" style="min-height:60px;font-family:monospace;font-size:12px;" placeholder="rsi14 < 70 AND htf_bias == bullish">${_conditionsToText(wizData.entry_conditions)}</textarea>
+          </div>
+          <div>
+            <label style="color:#ff1744;font-size:12px;font-weight:600;">EXIT CONDITIONS (code)</label>
+            <textarea id="exitCondCode" style="min-height:60px;font-family:monospace;font-size:12px;" placeholder="exit_score >= 3 AND ticks_pnl > 20">${_conditionsToText(wizData.exit_conditions)}</textarea>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function _conditionRow(cond, index, type) {
+    const field = cond?.field || '';
+    const op = cond?.op || '>';
+    const value = cond?.value ?? '';
+    const logic = cond?.logic || 'AND';
+    const fields = ['rsi14','htf_bias','session_bucket','bull_confluence','bear_confluence','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','f_squeeze_off','wt1','er_val','price_above_ema20','price_above_ema50','cvd_trend','cvd_divergence','bar_time_hhmm','day_of_week','mins_to_maintenance','exit_score','ticks_pnl','dollar_pnl','bars_in_trade'];
+    const ops = ['<','<=','>','>=','==','!=','in','between'];
+    return `<div style="display:flex;gap:4px;align-items:center;margin-top:4px;" data-cond-row="${type}-${index}">
+      ${index > 0 ? `<select style="width:55px;padding:2px;background:var(--bg);border:1px solid var(--border);color:var(--accent);border-radius:3px;font-size:11px;" data-cond-logic="${type}"><option ${logic==='AND'?'selected':''}>AND</option><option ${logic==='OR'?'selected':''}>OR</option></select>` : '<span style="width:55px;"></span>'}
+      <select style="flex:1;padding:4px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;" data-cond-field="${type}">
+        <option value="">-- field --</option>
+        ${fields.map(f => `<option value="${f}" ${field===f?'selected':''}>${f}</option>`).join('')}
+      </select>
+      <select style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;" data-cond-op="${type}">
+        ${ops.map(o => `<option value="${o}" ${op===o?'selected':''}>${o}</option>`).join('')}
+      </select>
+      <input type="text" value="${value}" style="width:80px;padding:4px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;" data-cond-value="${type}" placeholder="value">
+      <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#ff1744;cursor:pointer;font-size:14px;">×</button>
+    </div>`;
+  }
+
+  function addConditionRow(type) {
+    const container = el(type + 'CondRows');
+    const index = container.children.length;
+    container.insertAdjacentHTML('beforeend', _conditionRow({logic: 'AND'}, index, type));
+  }
+
+  function _conditionsToText(conditions) {
+    if (!conditions || !Array.isArray(conditions) || conditions.length === 0) return '';
+    return conditions.map((c, i) => {
+      const prefix = i > 0 ? (c.logic || 'AND') + ' ' : '';
+      return `${prefix}${c.field || ''} ${c.op || '=='} ${c.value ?? ''}`;
+    }).join('\n');
+  }
+
+  function _collectConditionRows(type) {
+    const rows = document.querySelectorAll(`[data-cond-row^="${type}-"]`);
+    const conditions = [];
+    rows.forEach(row => {
+      const field = row.querySelector(`[data-cond-field="${type}"]`)?.value;
+      const op = row.querySelector(`[data-cond-op="${type}"]`)?.value;
+      const valueStr = row.querySelector(`[data-cond-value="${type}"]`)?.value;
+      const logic = row.querySelector(`[data-cond-logic="${type}"]`)?.value || 'AND';
+      if (field && op) {
+        let value = valueStr;
+        if (value === 'true') value = true;
+        else if (value === 'false') value = false;
+        else if (!isNaN(value) && value !== '') value = parseFloat(value);
+        conditions.push({ field, op, value, logic });
+      }
+    });
+    return conditions;
+  }
+
+  function _conditionsToRuleTree(conditions) {
+    if (!conditions || conditions.length === 0) return null;
+    if (conditions.length === 1) {
+      return { field: conditions[0].field, op: conditions[0].op, value: conditions[0].value };
+    }
+    return {
+      op: conditions[1]?.logic || 'AND',
+      conditions: conditions.map(c => ({ field: c.field, op: c.op, value: c.value }))
+    };
+  }
+
+  function saveStepGateMode() {
+    const selected = document.querySelector('input[name="gateMode"]:checked');
+    wizData.gate_mode = selected?.value || 'ai_only';
+
+    // Save from form view
+    if (el('condFormView')?.style.display !== 'none') {
+      wizData.entry_conditions = _collectConditionRows('entry');
+      wizData.exit_conditions = _collectConditionRows('exit');
+    }
+    // TODO: parse code view if active
   }
 
   // ── Step 2: Strategy Parameters (Python bots only) ──
@@ -1912,12 +2067,16 @@ REASON: [one concise sentence]`;
 
   function wizardBack() {
     if (wizStep <= 1) return;
-    if (wizStep === 2) saveStepParams();
-    if (wizStep === 4) saveStep3();
-    if (wizStep === 5) saveStep4();
+    if (wizStep === 2) saveStepGateMode();
+    if (wizStep === 3) saveStepParams();
+    if (wizStep === 5) saveStep3();
+    if (wizStep === 6) saveStep4();
     wizStep--;
     // Skip params step if not python mode
-    if (wizStep === 2 && wizData.mode !== 'python') wizStep--;
+    if (wizStep === 3 && wizData.mode !== 'python') wizStep--;
+    // Skip prompt steps if conditions_only
+    if (wizStep === 5 && wizData.gate_mode === 'conditions_only') wizStep = 4;
+    if (wizStep === 6 && wizData.gate_mode === 'conditions_only') wizStep = 4;
     renderWizardStep();
   }
 
@@ -1928,21 +2087,30 @@ REASON: [one concise sentence]`;
       if (!wizData.account) { alert('Account is required'); return; }
       if (wizData.mode === 'copy' && !wizData.source_bot) { alert('Source Bot is required for copy mode'); return; }
       if (wizData.mode === 'python' && !wizData.strategy_name) { alert('Strategy is required for Python mode'); return; }
-      // Skip to step 2 (params) for python, step 3 (indicators) otherwise
-      wizStep = wizData.mode === 'python' ? 2 : 3;
+      wizStep = 2; // Gate Mode
       renderWizardStep();
     } else if (wizStep === 2) {
-      saveStepParams();
-      wizStep = 3;
+      saveStepGateMode();
+      // Skip to step 3 (params) for python, step 4 (indicators) otherwise
+      wizStep = wizData.mode === 'python' ? 3 : 4;
       renderWizardStep();
     } else if (wizStep === 3) {
-      wizStep = 4;
+      saveStepParams();
+      wizStep = 4; // Indicators
       renderWizardStep();
     } else if (wizStep === 4) {
-      saveStep3();
-      wizStep = 5;
-      renderWizardStep();
+      // Skip prompts for conditions_only
+      if (wizData.gate_mode === 'conditions_only') {
+        if (wizardEditMode) { await saveBot(); } else { await createBot(); }
+      } else {
+        wizStep = 5; // Entry Prompt
+        renderWizardStep();
+      }
     } else if (wizStep === 5) {
+      saveStep3();
+      wizStep = 6; // Exit Prompt
+      renderWizardStep();
+    } else if (wizStep === 6) {
       saveStep4();
       if (wizardEditMode) {
         await saveBot();
@@ -1970,6 +2138,8 @@ REASON: [one concise sentence]`;
 
       // 1. Create bot
       const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty, auto_update_params: wizData.auto_update_params, ...(wizData.strategy_params || {}) }) : undefined;
+      const entryRuleTree = _conditionsToRuleTree(wizData.entry_conditions);
+      const exitRuleTree = _conditionsToRuleTree(wizData.exit_conditions);
       const botBody = {
         bot_id: wizData.bot_id,
         mode: wizData.mode,
@@ -1979,6 +2149,9 @@ REASON: [one concise sentence]`;
         source_bot: wizData.mode === 'copy' ? wizData.source_bot : undefined,
         strategy_name: wizData.mode === 'python' ? wizData.strategy_name : undefined,
         config_json: configJson,
+        gate_mode: wizData.gate_mode || 'ai_only',
+        entry_conditions: entryRuleTree ? JSON.stringify(entryRuleTree) : undefined,
+        exit_conditions: exitRuleTree ? JSON.stringify(exitRuleTree) : undefined,
         entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : undefined,
         manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : undefined,
       };
@@ -2031,6 +2204,8 @@ REASON: [one concise sentence]`;
 
       // 1. PUT bot config
       const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty }) : null;
+      const entryRuleTree = _conditionsToRuleTree(wizData.entry_conditions);
+      const exitRuleTree = _conditionsToRuleTree(wizData.exit_conditions);
       const botBody = {
         mode: wizData.mode,
         account: wizData.account,
@@ -2039,6 +2214,9 @@ REASON: [one concise sentence]`;
         source_bot: wizData.mode === 'copy' ? wizData.source_bot : null,
         strategy_name: wizData.mode === 'python' ? wizData.strategy_name : null,
         config_json: configJson,
+        gate_mode: wizData.gate_mode || 'ai_only',
+        entry_conditions: entryRuleTree ? JSON.stringify(entryRuleTree) : null,
+        exit_conditions: exitRuleTree ? JSON.stringify(exitRuleTree) : null,
         entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : null,
         manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : null,
       };
