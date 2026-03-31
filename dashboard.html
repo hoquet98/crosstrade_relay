@@ -2258,7 +2258,12 @@ REASON: [one concise sentence]`;
 
     if (wizIndicators.length === 0) {
       try {
-        const resp = await fetch(`${BASE}/webhook/ai/strategies/PrecisionScalp/indicators`);
+        // Load all available indicators from global registry
+        let resp = await fetch(`${BASE}/webhook/ai/strategies/global/indicators`);
+        // Fall back to PrecisionScalp for backwards compatibility
+        if (!resp.ok || (await resp.clone().json()).length === 0) {
+          resp = await fetch(`${BASE}/webhook/ai/strategies/PrecisionScalp/indicators`);
+        }
         if (resp.ok) wizIndicators = await resp.json();
       } catch (e) {}
     }
@@ -2275,8 +2280,10 @@ REASON: [one concise sentence]`;
       groups[ind.category].push(ind);
     });
 
-    const categoryOrder = ['signal', 'layer', 'oscillator', 'trend', 'volatility', 'candle', 'session', 'cvd'];
+    const categoryOrder = ['signal', 'institutional_gate', 'layer', 'oscillator', 'trend', 'volatility', 'candle', 'session', 'cvd'];
+    // Include any categories not in the predefined order (catch-all)
     const sortedCategories = categoryOrder.filter(c => groups[c]);
+    Object.keys(groups).forEach(c => { if (!sortedCategories.includes(c)) sortedCategories.push(c); });
 
     let html = '';
     for (const cat of sortedCategories) {
