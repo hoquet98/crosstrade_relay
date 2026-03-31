@@ -1843,17 +1843,54 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
                                         entry_prompt=entry_prompt, ai_model=model)
             # else: flat, no signal — nothing to do
         else:
-            # === IN POSITION — manage ===
-            gate = bot.get("gate_mode", "ai_only") if bot else "ai_only"
+            # === IN POSITION ===
             pos_direction = position.get("direction", "long")
-            if pos_direction == "long":
-                exit_conds = bot.get("exit_conditions_long") or bot.get("exit_conditions") if bot else None
+
+            # Check for opposite signal → close position
+            # (TV strategy sends sell while long = exit, buy while short = exit)
+            long_sig = filtered_payload.get("long_signal", False)
+            short_sig = filtered_payload.get("short_signal", False)
+            action = str(filtered_payload.get("action", "")).lower()
+            if not long_sig and not short_sig and action:
+                long_sig = action == "buy"
+                short_sig = action == "sell"
+
+            opposite_signal = (pos_direction == "long" and short_sig) or \
+                              (pos_direction == "short" and long_sig)
+
+            if opposite_signal:
+                # Strategy sent opposite signal — close the position
+                current_price = filtered_payload.get("close", filtered_payload.get("price", 0))
+                reason = f"Strategy signal: {'SELL' if short_sig else 'BUY'} while {pos_direction.upper()} — closing position"
+                logger.info(f"[{relay_user}/{relay_id}] {reason}")
+
+                # Compute P&L for logging
+                entry_price = position["entry_price"]
+                points_pnl, dollar_pnl, ticks_pnl = _compute_pnl(instrument, pos_direction, entry_price, current_price)
+                bar_count = (position.get("bar_count", 0) or 0) + 1
+
+                await _force_close(position, current_price, reason, filtered_payload)
+                _log_decision(
+                    relay_user=relay_user, relay_id=relay_id,
+                    account=account, instrument=instrument,
+                    signal="EXIT", strategy=filtered_payload.get("strategy", "unknown"),
+                    confluence_score=0,
+                    ai_decision="SIGNAL_EXIT", ai_reason=reason,
+                    ai_latency_ms=0, relay_result="signal_exit",
+                    relay_details=reason, payload_json=body_text,
+                    alert_type="manage"
+                )
             else:
-                exit_conds = bot.get("exit_conditions_short") or bot.get("exit_conditions") if bot else None
-            await _handle_manage(filtered_payload, body_text, position,
-                                 manage_prompt=manage_prompt, ai_model=model,
-                                 gate_mode=gate,
-                                 exit_conditions=exit_conds)
+                # Normal manage — check conditions / AI for exit
+                gate = bot.get("gate_mode", "ai_only") if bot else "ai_only"
+                if pos_direction == "long":
+                    exit_conds = bot.get("exit_conditions_long") or bot.get("exit_conditions") if bot else None
+                else:
+                    exit_conds = bot.get("exit_conditions_short") or bot.get("exit_conditions") if bot else None
+                await _handle_manage(filtered_payload, body_text, position,
+                                     manage_prompt=manage_prompt, ai_model=model,
+                                     gate_mode=gate,
+                                     exit_conditions=exit_conds)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
