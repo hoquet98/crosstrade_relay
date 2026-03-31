@@ -211,6 +211,7 @@ async def _stream_loop(client_secret: str, refresh_token: str,
     from tastytrade import Session, DXLinkStreamer
     from tastytrade.dxfeed import Quote, TimeAndSale
 
+    logger.info(f"TT: Stream loop starting (secret={client_secret[:8]}..., token={refresh_token[:20]}...)")
     while True:
         try:
             logger.info("TT: Creating session...")
@@ -218,6 +219,7 @@ async def _stream_loop(client_secret: str, refresh_token: str,
                 provider_secret=client_secret,
                 refresh_token=refresh_token,
             )
+            logger.info("TT: Session created, refreshing token...")
             await session.refresh(force=True)
             logger.info("TT: Session authenticated")
 
@@ -325,7 +327,13 @@ def start(product_codes: list[str] = None):
     except Exception as e:
         logger.warning(f"TT: Failed to load historical bars: {e}")
 
-    _tt_task = asyncio.create_task(_stream_loop(client_secret, refresh_token, product_codes))
+    async def _safe_stream():
+        try:
+            await _stream_loop(client_secret, refresh_token, product_codes)
+        except Exception as e:
+            logger.error(f"TT: Feed CRASHED: {type(e).__name__}: {e}", exc_info=True)
+
+    _tt_task = asyncio.create_task(_safe_stream())
     logger.info(f"TT: Feed started for {product_codes}")
     return True
 
