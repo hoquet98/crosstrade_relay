@@ -58,9 +58,23 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to load historical bars: {e}")
 
     logger.info(f"Trade Relay started -- database initialized (AI Gate: {'DRY RUN' if ai_gate.AI_DRY_RUN else 'LIVE'})")
-    logger.info("Data feed: waiting for NT8 QTPDataFeed on /webhook/data")
+
+    # Start Tastytrade data feed if credentials are available
+    tt_feed = None
+    try:
+        import tastytrade_feed
+        if tastytrade_feed.start():
+            tt_feed = tastytrade_feed
+            logger.info("Data feed: Tastytrade streaming started")
+        else:
+            logger.info("Data feed: Tastytrade not configured, using NT8 /webhook/data")
+    except Exception as e:
+        logger.warning(f"Data feed: Tastytrade feed failed to start: {e}")
+        logger.info("Data feed: Falling back to NT8 /webhook/data")
+
     yield
-    # cvd.stop()
+    if tt_feed:
+        tt_feed.stop()
     watchdog.cancel()
     logger.info("Trade Relay shutting down")
 
@@ -421,12 +435,23 @@ async def webhook(request: Request):
 
 @app.get("/health")
 async def health():
+    tt_connected = False
+    tt_symbols = {}
+    try:
+        import tastytrade_feed
+        tt_connected = tastytrade_feed.is_connected()
+        tt_symbols = tastytrade_feed.get_symbols()
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "ai_gate": "dry_run" if ai_gate.AI_DRY_RUN else "live",
         "default_model": ai_gate.DEFAULT_AI_MODEL,
         "anthropic_key_set": bool(ai_gate.ANTHROPIC_API_KEY),
-        "minimax_key_set": bool(ai_gate.MINIMAX_API_KEY)
+        "minimax_key_set": bool(ai_gate.MINIMAX_API_KEY),
+        "tastytrade_feed": "connected" if tt_connected else "disconnected",
+        "tastytrade_symbols": tt_symbols,
     }
 
 @app.get("/positions")
