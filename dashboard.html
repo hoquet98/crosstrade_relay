@@ -1758,38 +1758,35 @@ REASON: [one concise sentence]`;
   // ── Shared: renders one side (long or short) of a condition panel ──
   function _condSide(type, label, color, conditions) {
     const rows = (conditions || []).map((c, i) => _conditionRow(c, i, type)).join('');
-    return `<div style="flex:1;min-width:0;padding:10px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;">
-      <label style="display:block;color:${color};font-size:12px;font-weight:600;margin-bottom:8px;text-transform:uppercase;">${label}</label>
-      <div id="${type}CondRows">${rows}</div>
-      <button onclick="addConditionRow('${type}')" style="margin-top:8px;padding:5px 14px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Condition</button>
-      <div style="margin-top:8px;display:flex;gap:6px;align-items:center;">
-        <button onclick="_testFormConditions('${type}')" style="padding:4px 12px;background:${color === '#00e676' ? '#1a2a1a' : '#2a1a1a'};border:1px solid ${color === '#00e676' ? '#2a4a2a' : '#4a2a2a'};color:${color};border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Live</button>
-        <span id="${type}FormTestResult" style="font-size:10px;"></span>
+    return `<div style="flex:1;min-width:0;padding:8px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;">
+      <label style="display:block;color:${color};font-size:11px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">${label}</label>
+      <div id="${type}CondRows" style="max-height:160px;overflow-y:auto;">${rows}</div>
+      <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+        <button onclick="addConditionRow('${type}')" style="padding:3px 10px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:3px;cursor:pointer;font-size:10px;">+ Add</button>
+        <button onclick="_testFormConditions('${type}')" style="padding:3px 8px;background:${color === '#00e676' ? '#1a2a1a' : '#2a1a1a'};border:1px solid ${color === '#00e676' ? '#2a4a2a' : '#4a2a2a'};color:${color};border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;">Test</button>
+        <span id="${type}FormTestResult" style="font-size:9px;"></span>
       </div>
     </div>`;
   }
 
   function _condCodeSide(type, label, color, conditions, placeholder) {
     const examples = type.includes('entry') ? [
-      {code: type.includes('long') ? 'rsi14 < 50 AND htf_bias == bullish AND f_trending == true' : 'rsi14 > 60 AND htf_bias == bearish AND f_trending == true', desc: 'Trend aligned'},
-      {code: type.includes('long') ? 'bull_confluence >= 3 AND price_above_ema20 == true' : 'bear_confluence >= 3 AND price_above_ema20 == false', desc: 'Confluence'},
-      {code: 'rsi14 between 30 70 AND session_bucket != midday_chop', desc: 'Between + session'},
+      {code: type.includes('long') ? 'rsi14 < 50 AND htf_bias == bullish' : 'rsi14 > 60 AND htf_bias == bearish', desc: 'Trend'},
+      {code: type.includes('long') ? 'bull_confluence >= 3' : 'bear_confluence >= 3', desc: 'Confluence'},
+      {code: 'rsi14 between 30 70', desc: 'Between'},
     ] : [
-      {code: 'exit_score >= 3 AND ticks_pnl > 20', desc: 'Score + profit'},
-      {code: 'ticks_pnl < -80 OR bars_in_trade > 30', desc: 'Stop / timeout'},
-      {code: type.includes('long') ? 'f_zlema_trend_bear == true AND stoch_in_ob == true' : 'f_zlema_trend_bull == true AND stoch_in_os == true', desc: 'Trend flip'},
+      {code: 'exit_score >= 3 AND ticks_pnl > 20', desc: 'Score'},
+      {code: 'ticks_pnl < -80', desc: 'Stop'},
+      {code: type.includes('long') ? 'f_zlema_trend_bear == true' : 'f_zlema_trend_bull == true', desc: 'Flip'},
     ];
-    return `<div style="flex:1;min-width:0;padding:10px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;">
-      <label style="display:block;color:${color};font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${label}</label>
-      <textarea id="${type}CondCode" style="display:block;width:100%;min-height:100px;padding:8px 10px;font-family:'Consolas',monospace;font-size:12px;line-height:1.4;background:#111;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="${placeholder}">${_conditionsToText(conditions)}</textarea>
-      <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
-        <button onclick="_testConditions('${type}CondCode')" style="padding:4px 12px;background:${color === '#00e676' ? '#1a2a1a' : '#2a1a1a'};border:1px solid ${color === '#00e676' ? '#2a4a2a' : '#4a2a2a'};color:${color};border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Live</button>
-        <span id="${type}CondTestResult" style="font-size:10px;"></span>
+    return `<div style="flex:1;min-width:0;padding:8px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;">
+      <label style="display:block;color:${color};font-size:11px;font-weight:600;margin-bottom:4px;text-transform:uppercase;">${label}</label>
+      <textarea id="${type}CondCode" style="display:block;width:100%;height:70px;padding:6px 8px;font-family:'Consolas',monospace;font-size:11px;line-height:1.4;background:#111;border:1px solid #333;color:#e6edf3;border-radius:4px;resize:vertical;box-sizing:border-box;" placeholder="${placeholder}">${_conditionsToText(conditions)}</textarea>
+      <div style="margin-top:4px;display:flex;gap:4px;align-items:center;">
+        <button onclick="_testConditions('${type}CondCode')" style="padding:3px 8px;background:${color === '#00e676' ? '#1a2a1a' : '#2a1a1a'};border:1px solid ${color === '#00e676' ? '#2a4a2a' : '#4a2a2a'};color:${color};border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;">Test</button>
+        <span id="${type}CondTestResult" style="font-size:9px;"></span>
       </div>
-      <div style="margin-top:8px;">
-        <div style="color:#58a6ff;font-size:9px;font-weight:600;margin-bottom:3px;">EXAMPLES</div>
-        ${examples.map(e => `<div onclick="_setCondCode('${type}CondCode', '${e.code}')" style="color:#8b949e;font-size:10px;font-family:monospace;cursor:pointer;padding:2px 4px;border-radius:2px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${e.code}"><span style="color:#56d364;">${e.desc}:</span> ${e.code}</div>`).join('')}
-      </div>
+      <div style="margin-top:4px;">${examples.map(e => `<span onclick="_setCondCode('${type}CondCode', '${e.code}')" style="color:#8b949e;font-size:9px;cursor:pointer;margin-right:6px;" title="${e.code}"><span style="color:#56d364;">${e.desc}</span></span>`).join('')}</div>
     </div>`;
   }
 
@@ -1803,7 +1800,7 @@ REASON: [one concise sentence]`;
         </div>
         <button onclick="_toggleLiveValues('entryLiveValues')" style="padding:5px 12px;background:#0a1628;border:1px solid #1a3a5c;color:#58a6ff;border-radius:4px;cursor:pointer;font-size:11px;margin-left:auto;">&#9881; Live Values</button>
       </div>
-      <div id="entryLiveValues" style="display:none;margin-bottom:10px;max-height:150px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
+      <div id="entryLiveValues" style="display:none;margin-bottom:10px;max-height:100px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:6px;"></div>
       <div id="condFormEntry" style="display:flex;gap:12px;">
         ${_condSide('entry_long', 'Long Entry', '#00e676', wizData.entry_conditions_long)}
         ${_condSide('entry_short', 'Short Entry', '#ff1744', wizData.entry_conditions_short)}
@@ -1841,7 +1838,7 @@ REASON: [one concise sentence]`;
         </div>
         <button onclick="_toggleLiveValues('exitLiveValues')" style="padding:5px 12px;background:#0a1628;border:1px solid #1a3a5c;color:#58a6ff;border-radius:4px;cursor:pointer;font-size:11px;margin-left:auto;">&#9881; Live Values</button>
       </div>
-      <div id="exitLiveValues" style="display:none;margin-bottom:10px;max-height:150px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
+      <div id="exitLiveValues" style="display:none;margin-bottom:10px;max-height:100px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:6px;"></div>
       <div id="condFormExit" style="display:flex;gap:12px;">
         ${_condSide('exit_long', 'Long Exit', '#00e676', wizData.exit_conditions_long)}
         ${_condSide('exit_short', 'Short Exit', '#ff1744', wizData.exit_conditions_short)}
