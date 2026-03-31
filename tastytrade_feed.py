@@ -261,34 +261,32 @@ async def _stream_loop(client_secret: str, refresh_token: str,
                 _tt_connected = True
                 logger.info("TT: Streaming started — listening for quotes and ticks")
 
-                tick_count = 0
-                quote_count = 0
+                # Run both listeners as separate tasks
+                async def _quote_loop():
+                    count = 0
+                    async for quote in streamer.listen(Quote):
+                        try:
+                            _process_quote(quote)
+                            count += 1
+                            if count == 1:
+                                logger.info(f"TT: First quote received: {quote.event_symbol}")
+                        except Exception as e:
+                            logger.debug(f"TT: Quote error: {e}")
 
-                while True:
-                    # Use get_event to receive any event type
-                    try:
-                        quote = await asyncio.wait_for(
-                            streamer.get_event(Quote), timeout=0.1
-                        )
-                        _process_quote(quote)
-                        quote_count += 1
-                    except asyncio.TimeoutError:
-                        pass
-                    except Exception as e:
-                        logger.debug(f"TT: Quote event error: {e}")
+                async def _tick_loop():
+                    count = 0
+                    async for tick in streamer.listen(TimeAndSale):
+                        try:
+                            _process_time_and_sale(tick)
+                            count += 1
+                            if count == 1:
+                                logger.info(f"TT: First tick received: {tick.event_symbol} price={tick.price} side={tick.aggressor_side}")
+                            if count % 5000 == 0:
+                                logger.info(f"TT: {count} ticks processed")
+                        except Exception as e:
+                            logger.debug(f"TT: Tick error: {e}")
 
-                    try:
-                        tick = await asyncio.wait_for(
-                            streamer.get_event(TimeAndSale), timeout=0.1
-                        )
-                        _process_time_and_sale(tick)
-                        tick_count += 1
-                        if tick_count % 1000 == 0:
-                            logger.info(f"TT: Processed {tick_count} ticks, {quote_count} quotes")
-                    except asyncio.TimeoutError:
-                        pass
-                    except Exception as e:
-                        logger.debug(f"TT: TaS event error: {e}")
+                await asyncio.gather(_quote_loop(), _tick_loop())
 
         except asyncio.CancelledError:
             logger.info("TT: Stream cancelled")
