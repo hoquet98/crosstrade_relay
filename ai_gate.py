@@ -296,6 +296,14 @@ def init_db():
         conn.execute("ALTER TABLE ai_bots ADD COLUMN entry_conditions TEXT")
     if "exit_conditions" not in bot_cols:
         conn.execute("ALTER TABLE ai_bots ADD COLUMN exit_conditions TEXT")
+    if "entry_conditions_long" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN entry_conditions_long TEXT")
+    if "entry_conditions_short" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN entry_conditions_short TEXT")
+    if "exit_conditions_long" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN exit_conditions_long TEXT")
+    if "exit_conditions_short" not in bot_cols:
+        conn.execute("ALTER TABLE ai_bots ADD COLUMN exit_conditions_short TEXT")
 
     # Add entry_snapshot to ai_trades
     trade_cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_trades)").fetchall()]
@@ -808,7 +816,9 @@ def update_bot(bot_id: str, **kwargs):
     init_db()
     allowed = {'mode', 'source_bot', 'relay_id', 'account', 'strategy_tag',
                'entry_prompt', 'manage_prompt', 'enabled', 'ai_model',
-               'gate_mode', 'entry_conditions', 'exit_conditions'}
+               'gate_mode', 'entry_conditions', 'exit_conditions',
+               'entry_conditions_long', 'entry_conditions_short',
+               'exit_conditions_long', 'exit_conditions_short'}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return
@@ -1784,7 +1794,11 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
             if long_sig or short_sig:
                 direction = "long" if long_sig else "short"
                 gate = bot.get("gate_mode", "ai_only") if bot else "ai_only"
-                entry_conds = bot.get("entry_conditions") if bot else None
+                # Use directional conditions if available, fall back to generic
+                if direction == "long":
+                    entry_conds = bot.get("entry_conditions_long") or bot.get("entry_conditions") if bot else None
+                else:
+                    entry_conds = bot.get("entry_conditions_short") or bot.get("entry_conditions") if bot else None
 
                 if gate == "conditions_only":
                     # Pure conditional gate — no AI call
@@ -1831,10 +1845,15 @@ async def _process_bar_for_bot(payload: dict, body_text: str,
         else:
             # === IN POSITION — manage ===
             gate = bot.get("gate_mode", "ai_only") if bot else "ai_only"
+            pos_direction = position.get("direction", "long")
+            if pos_direction == "long":
+                exit_conds = bot.get("exit_conditions_long") or bot.get("exit_conditions") if bot else None
+            else:
+                exit_conds = bot.get("exit_conditions_short") or bot.get("exit_conditions") if bot else None
             await _handle_manage(filtered_payload, body_text, position,
                                  manage_prompt=manage_prompt, ai_model=model,
                                  gate_mode=gate,
-                                 exit_conditions=bot.get("exit_conditions") if bot else None)
+                                 exit_conditions=exit_conds)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

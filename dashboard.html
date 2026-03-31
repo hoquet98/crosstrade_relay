@@ -276,7 +276,7 @@
   .wizard-overlay.active { display: flex; }
   .wizard-modal {
     background: var(--bg-card); border: 1px solid var(--border-accent); border-radius: 14px;
-    max-width: 780px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;
+    max-width: 960px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;
     box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   }
   .wizard-header {
@@ -1333,7 +1333,7 @@
   // ══════════════════════════════════════════════════════════════════════════
 
   let wizStep = 1;
-  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', strategy_name: '', instrument: 'MNQ', qty: 1, gate_mode: 'ai_only', entry_conditions: [], exit_conditions: [], indicators: {}, entry_prompt: '', manage_prompt: '' };
+  let wizData = { bot_id: '', mode: 'normal', source_bot: '', account: '', strategy_tag: 'AIGate', ai_model: '', strategy_name: '', instrument: 'MNQ', qty: 1, gate_mode: 'ai_only', entry_conditions_long: [], entry_conditions_short: [], exit_conditions_long: [], exit_conditions_short: [], indicators: {}, entry_prompt: '', manage_prompt: '' };
   let wizIndicators = []; // fetched from API
   let availableModels = [];
   let availableStrategies = [];
@@ -1493,12 +1493,22 @@ REASON: [one concise sentence]`;
       instrument: configParams.instrument || 'MNQ',
       qty: configParams.qty || 1,
       gate_mode: bot.gate_mode || 'ai_only',
-      entry_conditions: bot.entry_conditions ? (typeof bot.entry_conditions === 'string' ? _ruleTreeToRows(JSON.parse(bot.entry_conditions)) : []) : [],
-      exit_conditions: bot.exit_conditions ? (typeof bot.exit_conditions === 'string' ? _ruleTreeToRows(JSON.parse(bot.exit_conditions)) : []) : [],
+      entry_conditions_long: _safeParseRows(bot.entry_conditions_long),
+      entry_conditions_short: _safeParseRows(bot.entry_conditions_short),
+      exit_conditions_long: _safeParseRows(bot.exit_conditions_long),
+      exit_conditions_short: _safeParseRows(bot.exit_conditions_short),
       indicators: indicators,
       entry_prompt: bot.entry_prompt || DEFAULT_ENTRY_PROMPT,
       manage_prompt: bot.manage_prompt || DEFAULT_MANAGE_PROMPT,
     };
+
+    function _safeParseRows(val) {
+      if (!val) return [];
+      try {
+        const tree = typeof val === 'string' ? JSON.parse(val) : val;
+        return _ruleTreeToRows(tree);
+      } catch(e) { return []; }
+    }
 
     function _ruleTreeToRows(tree) {
       if (!tree) return [];
@@ -1745,9 +1755,33 @@ REASON: [one concise sentence]`;
     </div>`;
   }
 
-  // ── Step: Entry Conditions ──
+  // ── Shared: renders one side (long or short) of a condition panel ──
+  function _condSide(type, label, color, conditions) {
+    const rows = (conditions || []).map((c, i) => _conditionRow(c, i, type)).join('');
+    return `<div style="flex:1;min-width:0;">
+      <label style="display:block;color:${color};font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">${label}</label>
+      <div id="${type}CondRows">${rows}</div>
+      <button onclick="addConditionRow('${type}')" style="margin-top:6px;padding:4px 12px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:10px;">+ Add</button>
+      <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+        <button onclick="_testFormConditions('${type}')" style="padding:4px 10px;background:${color === '#00e676' ? '#1a2a1a' : '#2a1a1a'};border:1px solid ${color === '#00e676' ? '#2a4a2a' : '#4a2a2a'};color:${color};border-radius:4px;cursor:pointer;font-size:10px;font-weight:600;">Test</button>
+        <span id="${type}FormTestResult" style="font-size:10px;"></span>
+      </div>
+    </div>`;
+  }
+
+  function _condCodeSide(type, label, color, conditions, placeholder) {
+    return `<div style="flex:1;min-width:0;">
+      <label style="display:block;color:${color};font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">${label}</label>
+      <textarea id="${type}CondCode" style="display:block;width:100%;min-height:100px;padding:8px 10px;font-family:'Consolas',monospace;font-size:12px;line-height:1.4;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="${placeholder}">${_conditionsToText(conditions)}</textarea>
+      <div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+        <button onclick="_testConditions('${type}CondCode')" style="padding:4px 10px;background:${color === '#00e676' ? '#1a2a1a' : '#2a1a1a'};border:1px solid ${color === '#00e676' ? '#2a4a2a' : '#4a2a2a'};color:${color};border-radius:4px;cursor:pointer;font-size:10px;font-weight:600;">Test</button>
+        <span id="${type}CondTestResult" style="font-size:10px;"></span>
+      </div>
+    </div>`;
+  }
+
+  // ── Step: Entry Conditions (Long + Short side by side) ──
   function renderStepEntryConditions(body) {
-    const rows = (wizData.entry_conditions || []).map((c, i) => _conditionRow(c, i, 'entry')).join('');
     body.innerHTML = `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
         <div style="display:flex;gap:2px;background:#111;border-radius:6px;padding:2px;">
@@ -1756,41 +1790,17 @@ REASON: [one concise sentence]`;
         </div>
         <button onclick="_toggleLiveValues('entryLiveValues')" style="padding:5px 12px;background:#0a1628;border:1px solid #1a3a5c;color:#58a6ff;border-radius:4px;cursor:pointer;font-size:11px;margin-left:auto;">&#9881; Live Values</button>
       </div>
-      <div id="entryLiveValues" style="display:none;margin-bottom:10px;max-height:180px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
-      <div id="condFormEntry">
-        <label style="display:block;color:#00e676;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Entry Conditions</label>
-        <div id="entryCondRows">${rows}</div>
-        <button onclick="addConditionRow('entry')" style="margin-top:6px;padding:5px 14px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Condition</button>
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-          <button onclick="_testFormConditions('entry')" style="padding:5px 14px;background:#1a2a1a;border:1px solid #2a4a2a;color:#00e676;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
-          <span id="entryFormTestResult" style="font-size:11px;"></span>
-        </div>
+      <div id="entryLiveValues" style="display:none;margin-bottom:10px;max-height:150px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
+      <div id="condFormEntry" style="display:flex;gap:16px;">
+        ${_condSide('entry_long', 'Long Entry', '#00e676', wizData.entry_conditions_long)}
+        <div style="width:1px;background:#333;"></div>
+        ${_condSide('entry_short', 'Short Entry', '#ff1744', wizData.entry_conditions_short)}
       </div>
-      <div id="condCodeEntry" style="display:none;gap:12px;">
-        <div style="flex:1;">
-          <label style="display:block;color:#00e676;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Entry Conditions</label>
-          <textarea id="entryCondCode" style="display:block;width:100%;min-height:120px;padding:10px 12px;font-family:'Consolas',monospace;font-size:13px;line-height:1.5;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="rsi14 < 70 AND htf_bias == bullish&#10;AND session_bucket != midday_chop">${_conditionsToText(wizData.entry_conditions)}</textarea>
-          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-            <button onclick="_testConditions('entryCondCode')" style="padding:5px 14px;background:#1a2a1a;border:1px solid #2a4a2a;color:#00e676;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
-            <span id="entryCondTestResult" style="font-size:11px;"></span>
-          </div>
-          <div style="margin-top:10px;padding:10px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;">
-            <div style="color:#58a6ff;font-size:10px;font-weight:600;margin-bottom:6px;">EXAMPLES (click to use)</div>
-            <div style="display:flex;flex-direction:column;gap:4px;">
-              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="rsi14 < 70 AND htf_bias == bullish AND f_trending == true" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#56d364;">Numeric + String + Bool:</span> rsi14 < 70 AND htf_bias == bullish AND f_trending == true
-              </span>
-              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="rsi14 between 30 70 AND session_bucket != midday_chop" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#d29922;">Between:</span> rsi14 between 30 70 AND session_bucket != midday_chop
-              </span>
-              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="bull_confluence >= 3 AND price_above_ema20 == true AND stoch_in_ob == false" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#f85149;">Confluence + Booleans:</span> bull_confluence >= 3 AND price_above_ema20 == true AND stoch_in_ob == false
-              </span>
-              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="adx_trending == true AND macd_bull == true AND bar_time_hhmm >= 930 AND bar_time_hhmm <= 1500" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#79c0ff;">Session + Trend:</span> adx_trending == true AND macd_bull == true AND bar_time_hhmm >= 930 AND bar_time_hhmm <= 1500
-              </span>
-            </div>
-          </div>
+      <div id="condCodeEntry" style="display:none;">
+        <div style="display:flex;gap:16px;margin-bottom:10px;">
+          ${_condCodeSide('entry_long', 'Long Entry', '#00e676', wizData.entry_conditions_long, 'rsi14 < 50 AND htf_bias == bullish')}
+          <div style="width:1px;background:#333;"></div>
+          ${_condCodeSide('entry_short', 'Short Entry', '#ff1744', wizData.entry_conditions_short, 'rsi14 > 60 AND htf_bias == bearish')}
         </div>
         ${_referencePanel()}
       </div>
@@ -1799,13 +1809,13 @@ REASON: [one concise sentence]`;
 
   function saveStepEntryConditions() {
     if (el('condFormEntry')?.style.display !== 'none') {
-      wizData.entry_conditions = _collectConditionRows('entry');
+      wizData.entry_conditions_long = _collectConditionRows('entry_long');
+      wizData.entry_conditions_short = _collectConditionRows('entry_short');
     }
   }
 
   // ── Step: Exit Conditions ──
   function renderStepExitConditions(body) {
-    const rows = (wizData.exit_conditions || []).map((c, i) => _conditionRow(c, i, 'exit')).join('');
     body.innerHTML = `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
         <div style="display:flex;gap:2px;background:#111;border-radius:6px;padding:2px;">
@@ -1814,41 +1824,17 @@ REASON: [one concise sentence]`;
         </div>
         <button onclick="_toggleLiveValues('exitLiveValues')" style="padding:5px 12px;background:#0a1628;border:1px solid #1a3a5c;color:#58a6ff;border-radius:4px;cursor:pointer;font-size:11px;margin-left:auto;">&#9881; Live Values</button>
       </div>
-      <div id="exitLiveValues" style="display:none;margin-bottom:10px;max-height:180px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
-      <div id="condFormExit">
-        <label style="display:block;color:#ff1744;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Exit Conditions</label>
-        <div id="exitCondRows">${rows}</div>
-        <button onclick="addConditionRow('exit')" style="margin-top:6px;padding:5px 14px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Condition</button>
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-          <button onclick="_testFormConditions('exit')" style="padding:5px 14px;background:#3d0a0a;border:1px solid #4a2a2a;color:#ff1744;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
-          <span id="exitFormTestResult" style="font-size:11px;"></span>
-        </div>
+      <div id="exitLiveValues" style="display:none;margin-bottom:10px;max-height:150px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
+      <div id="condFormExit" style="display:flex;gap:16px;">
+        ${_condSide('exit_long', 'Long Exit', '#00e676', wizData.exit_conditions_long)}
+        <div style="width:1px;background:#333;"></div>
+        ${_condSide('exit_short', 'Short Exit', '#ff1744', wizData.exit_conditions_short)}
       </div>
-      <div id="condCodeExit" style="display:none;gap:12px;">
-        <div style="flex:1;">
-          <label style="display:block;color:#ff1744;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Exit Conditions</label>
-          <textarea id="exitCondCode" style="display:block;width:100%;min-height:120px;padding:10px 12px;font-family:'Consolas',monospace;font-size:13px;line-height:1.5;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="exit_score >= 3 AND ticks_pnl > 20&#10;OR zlema_flipped_bear == true">${_conditionsToText(wizData.exit_conditions)}</textarea>
-          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-            <button onclick="_testConditions('exitCondCode')" style="padding:5px 14px;background:#3d0a0a;border:1px solid #4a2a2a;color:#ff1744;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
-            <span id="exitCondTestResult" style="font-size:11px;"></span>
-          </div>
-          <div style="margin-top:10px;padding:10px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;">
-            <div style="color:#58a6ff;font-size:10px;font-weight:600;margin-bottom:6px;">EXAMPLES (click to use)</div>
-            <div style="display:flex;flex-direction:column;gap:4px;">
-              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="exit_score >= 3 AND ticks_pnl > 20" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#56d364;">Score + P&L:</span> exit_score >= 3 AND ticks_pnl > 20
-              </span>
-              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="ticks_pnl between -100 -50 OR bars_in_trade > 30" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#d29922;">Between + Time:</span> ticks_pnl between -100 -50 OR bars_in_trade > 30
-              </span>
-              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="f_zlema_trend_bear == true AND stoch_in_ob == true AND ticks_pnl > 10" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#f85149;">Trend Flip:</span> f_zlema_trend_bear == true AND stoch_in_ob == true AND ticks_pnl > 10
-              </span>
-              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="dollar_pnl > 50 OR ticks_pnl < -80" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
-                <span style="color:#79c0ff;">Profit Target / Stop:</span> dollar_pnl > 50 OR ticks_pnl < -80
-              </span>
-            </div>
-          </div>
+      <div id="condCodeExit" style="display:none;">
+        <div style="display:flex;gap:16px;margin-bottom:10px;">
+          ${_condCodeSide('exit_long', 'Long Exit', '#00e676', wizData.exit_conditions_long, 'exit_score >= 3 AND ticks_pnl > 20')}
+          <div style="width:1px;background:#333;"></div>
+          ${_condCodeSide('exit_short', 'Short Exit', '#ff1744', wizData.exit_conditions_short, 'exit_score >= 3 AND ticks_pnl > 20')}
         </div>
         ${_referencePanel({label:'Position', color:'#f85149', items:['exit_score','ticks_pnl','dollar_pnl','bars_in_trade']})}
       </div>
@@ -1857,7 +1843,8 @@ REASON: [one concise sentence]`;
 
   function saveStepExitConditions() {
     if (el('condFormExit')?.style.display !== 'none') {
-      wizData.exit_conditions = _collectConditionRows('exit');
+      wizData.exit_conditions_long = _collectConditionRows('exit_long');
+      wizData.exit_conditions_short = _collectConditionRows('exit_short');
     }
   }
 
@@ -2431,8 +2418,10 @@ REASON: [one concise sentence]`;
 
       // 1. Create bot
       const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty, auto_update_params: wizData.auto_update_params, ...(wizData.strategy_params || {}) }) : undefined;
-      const entryRuleTree = _conditionsToRuleTree(wizData.entry_conditions);
-      const exitRuleTree = _conditionsToRuleTree(wizData.exit_conditions);
+      const entryLongTree = _conditionsToRuleTree(wizData.entry_conditions_long);
+      const entryShortTree = _conditionsToRuleTree(wizData.entry_conditions_short);
+      const exitLongTree = _conditionsToRuleTree(wizData.exit_conditions_long);
+      const exitShortTree = _conditionsToRuleTree(wizData.exit_conditions_short);
       const botBody = {
         bot_id: wizData.bot_id,
         mode: wizData.mode,
@@ -2443,8 +2432,10 @@ REASON: [one concise sentence]`;
         strategy_name: wizData.mode === 'python' ? wizData.strategy_name : undefined,
         config_json: configJson,
         gate_mode: wizData.gate_mode || 'ai_only',
-        entry_conditions: entryRuleTree ? JSON.stringify(entryRuleTree) : undefined,
-        exit_conditions: exitRuleTree ? JSON.stringify(exitRuleTree) : undefined,
+        entry_conditions_long: entryLongTree ? JSON.stringify(entryLongTree) : undefined,
+        entry_conditions_short: entryShortTree ? JSON.stringify(entryShortTree) : undefined,
+        exit_conditions_long: exitLongTree ? JSON.stringify(exitLongTree) : undefined,
+        exit_conditions_short: exitShortTree ? JSON.stringify(exitShortTree) : undefined,
         entry_prompt: wizData.entry_prompt !== DEFAULT_ENTRY_PROMPT ? wizData.entry_prompt : undefined,
         manage_prompt: wizData.manage_prompt !== DEFAULT_MANAGE_PROMPT ? wizData.manage_prompt : undefined,
       };
@@ -2497,8 +2488,10 @@ REASON: [one concise sentence]`;
 
       // 1. PUT bot config
       const configJson = wizData.mode === 'python' ? JSON.stringify({ instrument: wizData.instrument, qty: wizData.qty }) : null;
-      const entryRuleTree = _conditionsToRuleTree(wizData.entry_conditions);
-      const exitRuleTree = _conditionsToRuleTree(wizData.exit_conditions);
+      const entryLongTree = _conditionsToRuleTree(wizData.entry_conditions_long);
+      const entryShortTree = _conditionsToRuleTree(wizData.entry_conditions_short);
+      const exitLongTree = _conditionsToRuleTree(wizData.exit_conditions_long);
+      const exitShortTree = _conditionsToRuleTree(wizData.exit_conditions_short);
       const botBody = {
         mode: wizData.mode,
         account: wizData.account,
