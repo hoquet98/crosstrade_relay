@@ -1346,7 +1346,7 @@
 
   initChart();
   fetchCandles();
-  setInterval(fetchCandles, 2000);
+  setInterval(fetchCandles, 1000);
 
   // ══════════════════════════════════════════════════════════════════════════
   // BOT WIZARD
@@ -1757,6 +1757,7 @@ REASON: [one concise sentence]`;
     const groups = [
       {label:'Operators', color:'#58a6ff', items:['<','<=','>','>=','==','!=','AND','OR','NOT','in','between'], isOp:true},
       {label:'Signals', color:'#3fb950', items:['bull_confluence','bear_confluence','long_signal','short_signal']},
+      {label:'Inst. Gates', color:'#ff6b9d', items:['squeeze_gate_ok','squeeze_ideal_bull','squeeze_ideal_bear','squeeze_type','vol_regime_adverse','vol_percentile','vwap_long_ok','vwap_short_ok','vwap_above','vwap_sigma_dist','delta_bull','delta_bear','bar_delta','rvol_ok']},
       {label:'Oscillators', color:'#d29922', items:['rsi14','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','wt1','williams_r','mfi14']},
       {label:'Trend', color:'#f85149', items:['htf_bias','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','price_above_ema20','price_above_ema50','supertrend_bull','adx_trending','macd_bull','not_choppy']},
       {label:'Volatility', color:'#56d364', items:['atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_squeeze_off','er_val']},
