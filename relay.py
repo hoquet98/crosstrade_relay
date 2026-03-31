@@ -847,6 +847,20 @@ async def ai_bots_list():
     return ai_gate.list_bots()
 
 
+@app.get("/webhook/ai/live-indicators")
+async def ai_live_indicators(instrument: str = "MNQ"):
+    """Get current computed indicator values for an instrument."""
+    import indicator_engine
+    context = indicator_engine.compute_all_indicators(instrument)
+    if not context:
+        return {"error": f"No bar data available for {instrument}"}
+    # Remove large arrays and internal fields
+    skip = {'last_5_closes', 'relay_user', 'relay_id', 'account', 'qty', 'strategy_tag',
+            'strategy', 'strategy_type', 'timeframe', 'target_ticks', 'stop_ticks',
+            'hard_stop_ticks', 'rr', 'tick_value'}
+    return {k: v for k, v in context.items() if k not in skip}
+
+
 @app.post("/webhook/ai/test-conditions")
 async def ai_test_conditions(request: Request):
     """Test condition expression against current live indicator values."""

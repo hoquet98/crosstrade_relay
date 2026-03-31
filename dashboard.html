@@ -1749,6 +1749,10 @@ REASON: [one concise sentence]`;
   function renderStepEntryConditions(body) {
     const rows = (wizData.entry_conditions || []).map((c, i) => _conditionRow(c, i, 'entry')).join('');
     body.innerHTML = `
+      <div style="margin-bottom:10px;">
+        <button onclick="_toggleLiveValues('entryLiveValues')" style="padding:4px 12px;background:#0d0d0d;border:1px solid #333;color:#58a6ff;border-radius:4px;cursor:pointer;font-size:11px;">Show Live Indicator Values</button>
+        <div id="entryLiveValues" style="display:none;margin-top:6px;max-height:180px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
+      </div>
       <div style="display:flex;gap:2px;margin-bottom:10px;background:#111;border-radius:6px;padding:2px;">
         <button id="entryFormBtn" onclick="_switchCondView('entry','form')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:var(--accent);color:#fff;">Form View</button>
         <button id="entryCodeBtn" onclick="_switchCondView('entry','code')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:transparent;color:var(--text-dim);">Code View</button>
@@ -1803,6 +1807,10 @@ REASON: [one concise sentence]`;
   function renderStepExitConditions(body) {
     const rows = (wizData.exit_conditions || []).map((c, i) => _conditionRow(c, i, 'exit')).join('');
     body.innerHTML = `
+      <div style="margin-bottom:10px;">
+        <button onclick="_toggleLiveValues('exitLiveValues')" style="padding:4px 12px;background:#0d0d0d;border:1px solid #333;color:#58a6ff;border-radius:4px;cursor:pointer;font-size:11px;">Show Live Indicator Values</button>
+        <div id="exitLiveValues" style="display:none;margin-top:6px;max-height:180px;overflow-y:auto;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:8px;"></div>
+      </div>
       <div style="display:flex;gap:2px;margin-bottom:10px;background:#111;border-radius:6px;padding:2px;">
         <button id="exitFormBtn" onclick="_switchCondView('exit','form')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:var(--accent);color:#fff;">Form View</button>
         <button id="exitCodeBtn" onclick="_switchCondView('exit','code')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:transparent;color:var(--text-dim);">Code View</button>
@@ -1886,6 +1894,52 @@ REASON: [one concise sentence]`;
       _lastFocusedTextarea = e.target;
     }
   });
+
+  async function _toggleLiveValues(containerId) {
+    const container = el(containerId);
+    if (!container) return;
+    if (container.style.display !== 'none') { container.style.display = 'none'; return; }
+    container.style.display = 'block';
+    container.innerHTML = '<span style="color:var(--text-dim);font-size:11px;">Loading...</span>';
+
+    try {
+      const inst = wizData.instrument || 'MNQ';
+      const resp = await fetch(`${BASE}/webhook/ai/live-indicators?instrument=${encodeURIComponent(inst)}`);
+      const data = await resp.json();
+      if (data.error) { container.innerHTML = `<span style="color:#ff1744;">${data.error}</span>`; return; }
+
+      // Group by type and render
+      const bools = [], nums = [], strs = [];
+      for (const [key, val] of Object.entries(data)) {
+        if (typeof val === 'boolean') bools.push([key, val]);
+        else if (typeof val === 'number') nums.push([key, val]);
+        else if (typeof val === 'string' && key !== 'bar_time_et') strs.push([key, val]);
+      }
+
+      let html = '';
+      if (nums.length) {
+        html += '<div style="margin-bottom:6px;"><span style="color:#d29922;font-size:10px;font-weight:600;">NUMERIC</span><div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:2px;">';
+        nums.sort((a,b) => a[0].localeCompare(b[0]));
+        html += nums.map(([k,v]) => `<span style="padding:2px 6px;background:#111;border:1px solid #222;border-radius:3px;font-size:10px;"><span style="color:#8b949e;">${k}</span>=<span style="color:#e6edf3;">${typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : v}</span></span>`).join('');
+        html += '</div></div>';
+      }
+      if (bools.length) {
+        html += '<div style="margin-bottom:6px;"><span style="color:#56d364;font-size:10px;font-weight:600;">BOOLEAN</span><div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:2px;">';
+        bools.sort((a,b) => a[0].localeCompare(b[0]));
+        html += bools.map(([k,v]) => `<span style="padding:2px 6px;background:#111;border:1px solid #222;border-radius:3px;font-size:10px;"><span style="color:#8b949e;">${k}</span>=<span style="color:${v ? '#00e676' : '#ff1744'};">${v}</span></span>`).join('');
+        html += '</div></div>';
+      }
+      if (strs.length) {
+        html += '<div><span style="color:#79c0ff;font-size:10px;font-weight:600;">STRING</span><div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:2px;">';
+        strs.sort((a,b) => a[0].localeCompare(b[0]));
+        html += strs.map(([k,v]) => `<span style="padding:2px 6px;background:#111;border:1px solid #222;border-radius:3px;font-size:10px;"><span style="color:#8b949e;">${k}</span>=<span style="color:#e6edf3;">"${v}"</span></span>`).join('');
+        html += '</div></div>';
+      }
+      container.innerHTML = html || '<span style="color:var(--text-dim);">No data available</span>';
+    } catch(e) {
+      container.innerHTML = `<span style="color:#ff1744;">Failed: ${e.message}</span>`;
+    }
+  }
 
   function _switchCondView(type, view) {
     const prefix = type === 'entry' ? 'Entry' : 'Exit';
