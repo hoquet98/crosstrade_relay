@@ -1757,6 +1757,10 @@ REASON: [one concise sentence]`;
         <label style="display:block;color:#00e676;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Entry Conditions</label>
         <div id="entryCondRows">${rows}</div>
         <button onclick="addConditionRow('entry')" style="margin-top:6px;padding:5px 14px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Condition</button>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+          <button onclick="_testFormConditions('entry')" style="padding:5px 14px;background:#1a2a1a;border:1px solid #2a4a2a;color:#00e676;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
+          <span id="entryFormTestResult" style="font-size:11px;"></span>
+        </div>
       </div>
       <div id="condCodeEntry" style="display:none;gap:12px;">
         <div style="flex:1;">
@@ -1807,6 +1811,10 @@ REASON: [one concise sentence]`;
         <label style="display:block;color:#ff1744;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Exit Conditions</label>
         <div id="exitCondRows">${rows}</div>
         <button onclick="addConditionRow('exit')" style="margin-top:6px;padding:5px 14px;background:#0d0d0d;border:1px solid #333;color:var(--text-dim);border-radius:4px;cursor:pointer;font-size:11px;">+ Add Condition</button>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+          <button onclick="_testFormConditions('exit')" style="padding:5px 14px;background:#3d0a0a;border:1px solid #4a2a2a;color:#ff1744;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
+          <span id="exitFormTestResult" style="font-size:11px;"></span>
+        </div>
       </div>
       <div id="condCodeExit" style="display:none;gap:12px;">
         <div style="flex:1;">
@@ -1878,6 +1886,49 @@ REASON: [one concise sentence]`;
       _lastFocusedTextarea = e.target;
     }
   });
+
+  async function _testFormConditions(type) {
+    const resultEl = el(type + 'FormTestResult');
+    if (!resultEl) return;
+    resultEl.innerHTML = '<span style="color:var(--text-dim);">Testing...</span>';
+
+    // Collect form rows and convert to text
+    const conditions = _collectConditionRows(type);
+    if (!conditions.length) { resultEl.innerHTML = '<span style="color:#d29922;">Add conditions first</span>'; return; }
+
+    const text = conditions.map((c, i) => {
+      const prefix = i > 0 ? (c.logic || 'AND') + ' ' : '';
+      if (c.op === 'between' && Array.isArray(c.value)) {
+        return `${prefix}${c.field} between ${c.value[0]} ${c.value[1]}`;
+      }
+      return `${prefix}${c.field} ${c.op} ${c.value}`;
+    }).join(' ');
+
+    // Reuse the code view test function
+    try {
+      const inst = wizData.instrument || 'MNQ';
+      const resp = await fetch(`${BASE}/webhook/ai/test-conditions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conditions_text: text, instrument: inst })
+      });
+      const data = await resp.json();
+      if (data.error) {
+        resultEl.innerHTML = `<span style="color:#ff1744;">Error: ${data.error}</span>`;
+      } else {
+        const passColor = data.result ? '#00e676' : '#ff1744';
+        const passText = data.result ? 'PASS' : 'FAIL';
+        let details = `<span style="color:${passColor};font-weight:600;">${passText}</span>`;
+        if (data.sample_values) {
+          const samples = Object.entries(data.sample_values).map(([k,v]) => `${k}=${v}`).join(', ');
+          details += `<span style="color:var(--text-dim);font-size:10px;margin-left:6px;">${samples}</span>`;
+        }
+        resultEl.innerHTML = details;
+      }
+    } catch (e) {
+      resultEl.innerHTML = `<span style="color:#ff1744;">Failed: ${e.message}</span>`;
+    }
+  }
 
   function _setCondCode(textareaId, code) {
     const ta = document.getElementById(textareaId);
