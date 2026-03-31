@@ -1807,19 +1807,24 @@ REASON: [one concise sentence]`;
     const field = cond?.field || '';
     const op = cond?.op || '>';
     const value = cond?.value ?? '';
+    const value2 = Array.isArray(cond?.value) ? cond.value[1] ?? '' : '';
+    const value1 = Array.isArray(cond?.value) ? cond.value[0] ?? '' : value;
     const logic = cond?.logic || 'AND';
-    const fields = ['rsi14','htf_bias','session_bucket','bull_confluence','bear_confluence','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','f_squeeze_off','wt1','er_val','price_above_ema20','price_above_ema50','cvd_trend','cvd_divergence','bar_time_hhmm','day_of_week','mins_to_maintenance','exit_score','ticks_pnl','dollar_pnl','bars_in_trade'];
-    const ops = ['<','<=','>','>=','==','!=','in','between'];
-    return `<div style="display:flex;gap:4px;align-items:center;margin-top:4px;" data-cond-row="${type}-${index}">
+    const isBetween = op === 'between';
+    const fields = ['rsi14','htf_bias','session_bucket','bull_confluence','bear_confluence','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','f_squeeze_off','wt1','er_val','price_above_ema20','price_above_ema50','cvd_trend','cvd_divergence','bar_time_hhmm','day_of_week','mins_to_maintenance','exit_score','ticks_pnl','dollar_pnl','bars_in_trade','adx14','adx_trending','macd_bull','supertrend_bull','not_choppy','choppiness','williams_r','roc10','mfi14','dema20','tema20','linreg_slope20'];
+    const ops = ['<','<=','>','>=','==','!=','between','in'];
+    const rowId = `${type}-${index}`;
+    return `<div style="display:flex;gap:4px;align-items:center;margin-top:4px;" data-cond-row="${rowId}">
       ${index > 0 ? `<select style="width:55px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#58a6ff;border-radius:3px;font-size:11px;" data-cond-logic="${type}"><option ${logic==='AND'?'selected':''}>AND</option><option ${logic==='OR'?'selected':''}>OR</option></select>` : '<span style="width:55px;"></span>'}
       <select style="width:180px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-field="${type}">
         <option value="" style="color:#8b949e;">-- field --</option>
-        ${fields.map(f => `<option value="${f}" style="color:#e6edf3;background:#0d0d0d;" ${field===f?'selected':''}>${f}</option>`).join('')}
+        ${fields.map(f => `<option value="${f}" style="color:#e6edf3;background:#0d0d0d;" ${(Array.isArray(cond?.value) ? '' : value) === f || cond?.field === f?'selected':''}>${f}</option>`).join('')}
       </select>
-      <select style="width:55px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-op="${type}">
+      <select style="width:65px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-op="${type}" onchange="this.parentElement.querySelector('[data-cond-value2]').style.display=this.value==='between'?'inline-block':'none'">
         ${ops.map(o => `<option value="${o}" style="color:#e6edf3;background:#0d0d0d;" ${op===o?'selected':''}>${o}</option>`).join('')}
       </select>
-      <input type="text" value="${value}" style="width:80px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-value="${type}" placeholder="value">
+      <input type="text" value="${value1}" style="width:70px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;" data-cond-value="${type}" placeholder="value">
+      <input type="text" value="${value2}" style="width:70px;padding:4px;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:3px;font-size:11px;display:${isBetween?'inline-block':'none'};" data-cond-value2="${type}" placeholder="to">
       <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#ff1744;cursor:pointer;font-size:14px;">×</button>
     </div>`;
   }
@@ -1856,6 +1861,13 @@ REASON: [one concise sentence]`;
     }).join('\n');
   }
 
+  function _parseCondValue(str) {
+    if (str === 'true') return true;
+    if (str === 'false') return false;
+    if (!isNaN(str) && str !== '') return parseFloat(str);
+    return str;
+  }
+
   function _collectConditionRows(type) {
     const rows = document.querySelectorAll(`[data-cond-row^="${type}-"]`);
     const conditions = [];
@@ -1863,12 +1875,15 @@ REASON: [one concise sentence]`;
       const field = row.querySelector(`[data-cond-field="${type}"]`)?.value;
       const op = row.querySelector(`[data-cond-op="${type}"]`)?.value;
       const valueStr = row.querySelector(`[data-cond-value="${type}"]`)?.value;
+      const value2Str = row.querySelector(`[data-cond-value2="${type}"]`)?.value;
       const logic = row.querySelector(`[data-cond-logic="${type}"]`)?.value || 'AND';
       if (field && op) {
-        let value = valueStr;
-        if (value === 'true') value = true;
-        else if (value === 'false') value = false;
-        else if (!isNaN(value) && value !== '') value = parseFloat(value);
+        let value;
+        if (op === 'between') {
+          value = [_parseCondValue(valueStr), _parseCondValue(value2Str)];
+        } else {
+          value = _parseCondValue(valueStr);
+        }
         conditions.push({ field, op, value, logic });
       }
     });
