@@ -397,6 +397,84 @@ def compute_all_indicators(instrument: str) -> dict:
     result["bar_time_et"] = f"{now.hour:02d}:{now.minute:02d} ET"
     result["bar_time_hhmm"] = hhmm
 
+    # ══════════════════════════════════════════════════════════════════════
+    # EXPANDED INDICATORS (Phase 5)
+    # ══════════════════════════════════════════════════════════════════════
+
+    try:
+        # ── DEMA / TEMA ──
+        dema20 = ind.dema(close, 20)
+        result["dema20"] = round(float(dema20.iloc[-1]), 2) if not np.isnan(dema20.iloc[-1]) else 0
+
+        tema20 = ind.tema(close, 20)
+        result["tema20"] = round(float(tema20.iloc[-1]), 2) if not np.isnan(tema20.iloc[-1]) else 0
+
+        # ── Supertrend ──
+        st_line, st_dir = ind.supertrend(high, low, close, period=10, multiplier=3.0)
+        result["supertrend"] = round(float(st_line.iloc[-1]), 2) if not np.isnan(st_line.iloc[-1]) else 0
+        result["supertrend_bull"] = bool(st_dir.iloc[-1] == 1) if not np.isnan(st_dir.iloc[-1]) else False
+
+        # ── ADX ──
+        adx_line, di_plus, di_minus = ind.adx(high, low, close, 14)
+        result["adx14"] = round(float(adx_line.iloc[-1]), 2) if not np.isnan(adx_line.iloc[-1]) else 0
+        result["di_plus"] = round(float(di_plus.iloc[-1]), 2) if not np.isnan(di_plus.iloc[-1]) else 0
+        result["di_minus"] = round(float(di_minus.iloc[-1]), 2) if not np.isnan(di_minus.iloc[-1]) else 0
+        result["adx_trending"] = result["adx14"] > 20
+
+        # ── MACD ──
+        macd_line, macd_signal, macd_hist = ind.macd(close, 12, 26, 9)
+        result["macd"] = round(float(macd_line.iloc[-1]), 4) if not np.isnan(macd_line.iloc[-1]) else 0
+        result["macd_signal"] = round(float(macd_signal.iloc[-1]), 4) if not np.isnan(macd_signal.iloc[-1]) else 0
+        result["macd_hist"] = round(float(macd_hist.iloc[-1]), 4) if not np.isnan(macd_hist.iloc[-1]) else 0
+        result["macd_bull"] = result["macd"] > result["macd_signal"]
+
+        # ── Choppiness Index ──
+        chop = ind.choppiness_index(high, low, close, 14)
+        result["choppiness"] = round(float(chop.iloc[-1]), 2) if not np.isnan(chop.iloc[-1]) else 50
+        result["not_choppy"] = result["choppiness"] < 55
+
+        # ── Williams %R ──
+        willr = ind.williams_r(high, low, close, 14)
+        result["williams_r"] = round(float(willr.iloc[-1]), 2) if not np.isnan(willr.iloc[-1]) else -50
+
+        # ── ROC (Rate of Change) ──
+        roc_val = ind.roc(close, 10)
+        result["roc10"] = round(float(roc_val.iloc[-1]), 4) if not np.isnan(roc_val.iloc[-1]) else 0
+
+        # ── OBV (On Balance Volume) ──
+        if len(volume) > 0 and float(volume.sum()) > 0:
+            obv_val = ind.obv(close, volume)
+            result["obv"] = round(float(obv_val.iloc[-1]), 0) if not np.isnan(obv_val.iloc[-1]) else 0
+            # OBV slope (5 bars)
+            if len(obv_val) >= 6:
+                result["obv_slope5"] = round(float(obv_val.iloc[-1] - obv_val.iloc[-6]), 0)
+            else:
+                result["obv_slope5"] = 0
+
+        # ── Donchian Channels ──
+        dc_upper, dc_lower, dc_mid = ind.donchian_channels(high, low, 20)
+        result["donchian_upper"] = round(float(dc_upper.iloc[-1]), 2) if not np.isnan(dc_upper.iloc[-1]) else 0
+        result["donchian_lower"] = round(float(dc_lower.iloc[-1]), 2) if not np.isnan(dc_lower.iloc[-1]) else 0
+        result["donchian_width"] = round(float(dc_upper.iloc[-1] - dc_lower.iloc[-1]), 2) if not np.isnan(dc_upper.iloc[-1]) else 0
+
+        # ── Linear Regression Slope ──
+        if len(close) >= 20:
+            from numpy.polynomial import polynomial as P
+            y = close.iloc[-20:].values.astype(float)
+            x = np.arange(len(y))
+            coeffs = np.polyfit(x, y, 1)
+            result["linreg_slope20"] = round(float(coeffs[0]), 4)
+        else:
+            result["linreg_slope20"] = 0
+
+        # ── MFI (Money Flow Index) ──
+        if len(volume) > 0 and float(volume.sum()) > 0:
+            mfi_val = ind.mfi(high, low, close, volume, 14)
+            result["mfi14"] = round(float(mfi_val.iloc[-1]), 2) if not np.isnan(mfi_val.iloc[-1]) else 50
+
+    except Exception as e:
+        logger.debug(f"Expanded indicator computation error: {e}")
+
     return result
 
 
