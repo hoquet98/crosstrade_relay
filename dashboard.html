@@ -1436,6 +1436,20 @@ REASON: [one concise sentence]`;
     try { availableModels = await (await fetch(`${BASE}/webhook/ai/models`)).json(); } catch(e) { availableModels = []; }
     try { availableStrategies = await (await fetch(`${BASE}/webhook/ai/strategies`)).json(); } catch(e) { availableStrategies = []; }
     try { availableInstruments = await (await fetch(`${BASE}/instruments`)).json(); } catch(e) { availableInstruments = []; }
+    // Fetch active instruments to mark live ones
+    try {
+      const cvdResp = await fetch(`${BASE}/cvd`);
+      const cvdData = await cvdResp.json();
+      availableInstruments.forEach(i => {
+        i._live = cvdData.some(d => d.instrument.startsWith(i.symbol) || d.instrument.startsWith(i.root));
+      });
+      // Sort: live first, then by preferred order
+      const symOrder = ['MNQ','NQ','MES','ES','M2K','RTY','MGC','GC','MCL','CL','SIL','SI'];
+      availableInstruments.sort((a, b) => {
+        if (a._live !== b._live) return b._live - a._live;
+        return (symOrder.indexOf(a.symbol) === -1 ? 99 : symOrder.indexOf(a.symbol)) - (symOrder.indexOf(b.symbol) === -1 ? 99 : symOrder.indexOf(b.symbol));
+      });
+    } catch(e) {}
     el('wizardTitle').textContent = 'Create New Bot';
     el('wizDelete').style.display = 'none';
     el('wizardOverlay').classList.add('active');
@@ -1586,6 +1600,18 @@ REASON: [one concise sentence]`;
           </select>
         </div>
       </div>
+      <div class="wiz-row" style="margin-top:8px;">
+        <div class="wiz-field">
+          <label>Instrument</label>
+          <select id="wizInstrument">
+            ${availableInstruments.map(i => `<option value="${i.symbol}" ${wizData.instrument === i.symbol || wizData.instrument === i.symbol + '1!' ? 'selected' : ''}>${i._live ? '● ' : '○ '}${i.symbol} — ${i.full_name}${i.current_contract ? ' (' + i.current_contract + ')' : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="wiz-field">
+          <label>Quantity</label>
+          <input type="number" id="wizQty" value="${wizData.qty}" min="1" max="100" style="width:80px;">
+        </div>
+      </div>
       <div id="wizPythonFields" style="display:${wizData.mode === 'python' ? 'block' : 'none'}; margin-top:8px;">
         <div class="wiz-field">
           <label>Strategy</label>
@@ -1593,18 +1619,6 @@ REASON: [one concise sentence]`;
             <option value="">-- select strategy --</option>
             ${availableStrategies.map(s => `<option value="${s.name}" ${wizData.strategy_name === s.name ? 'selected' : ''}>${s.name}${s.description ? ' — ' + s.description : ''}</option>`).join('')}
           </select>
-        </div>
-        <div class="wiz-row">
-          <div class="wiz-field">
-            <label>Instrument</label>
-            <select id="wizInstrument">
-              ${availableInstruments.map(i => `<option value="${i.symbol}" ${wizData.instrument === i.symbol || wizData.instrument === i.symbol + '1!' ? 'selected' : ''}>${i.symbol} — ${i.full_name}</option>`).join('')}
-            </select>
-          </div>
-          <div class="wiz-field">
-            <label>Quantity</label>
-            <input type="number" id="wizQty" value="${wizData.qty}" min="1" max="100" style="width:80px;">
-          </div>
         </div>
       </div>
       <div id="wizTVAlert" style="display:${wizData.mode === 'normal' ? 'block' : 'none'}; margin-top:16px; padding:14px; background:#111; border:1px solid var(--border); border-radius:8px;">
