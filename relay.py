@@ -946,6 +946,37 @@ async def ai_bot_disable(bot_id: str, _user: dict = Depends(verify_bearer)):
     return {"status": "ok", "bot_id": bot_id, "enabled": False}
 
 
+# ── Bot Review endpoints ──
+
+@app.post("/webhook/ai/bots/{bot_id}/review")
+async def ai_bot_review(bot_id: str, _user: dict = Depends(verify_bearer)):
+    """Trigger an on-demand bot review."""
+    import bot_reviewer
+    result = await bot_reviewer.review_bot(bot_id)
+    return result
+
+
+@app.get("/webhook/ai/bots/{bot_id}/reviews")
+async def ai_bot_reviews(bot_id: str, limit: int = 10):
+    """Get past reviews for a bot."""
+    import bot_reviewer
+    return bot_reviewer.get_reviews(bot_id, limit)
+
+
+@app.get("/webhook/ai/trades/analysis")
+async def ai_trades_analysis(relay_id: str = None):
+    """Aggregated indicator analysis for wins vs losses."""
+    import bot_reviewer
+    trades = ai_gate.get_trades(relay_id=relay_id, limit=100)
+    closed = [t for t in trades if t.get("status") == "closed"]
+    if not closed:
+        return {"error": "No closed trades"}
+    return {
+        "stats": bot_reviewer._compute_stats(closed),
+        "patterns": bot_reviewer._analyze_patterns(closed),
+    }
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ADMIN
 # ══════════════════════════════════════════════════════════════════════════════

@@ -2133,6 +2133,20 @@ async def stale_position_watchdog():
                 logger.info("Purged old bars (1m >14d, 5m >60d)")
             except Exception as e:
                 logger.error(f"Bar purge error: {e}")
+        # Periodic bot reviews every 240 iterations (4 hours)
+        if _watchdog_iter % 240 == 0 and _watchdog_iter > 0:
+            try:
+                import bot_reviewer
+                bots = list_bots()
+                for bot in bots:
+                    if bot.get("enabled"):
+                        trades = get_trades(relay_id=bot["bot_id"], limit=10)
+                        closed = [t for t in trades if t.get("status") == "closed"]
+                        if len(closed) >= 5:
+                            logger.info(f"Periodic review starting for bot: {bot['bot_id']}")
+                            await bot_reviewer.review_bot(bot["bot_id"])
+            except Exception as e:
+                logger.error(f"Periodic review error: {e}")
         try:
             positions = list_positions()
             now = datetime.now(timezone.utc)
