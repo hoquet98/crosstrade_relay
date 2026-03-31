@@ -1762,6 +1762,27 @@ REASON: [one concise sentence]`;
         <div style="flex:1;">
           <label style="display:block;color:#00e676;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Entry Conditions</label>
           <textarea id="entryCondCode" style="display:block;width:100%;min-height:120px;padding:10px 12px;font-family:'Consolas',monospace;font-size:13px;line-height:1.5;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="rsi14 < 70 AND htf_bias == bullish&#10;AND session_bucket != midday_chop">${_conditionsToText(wizData.entry_conditions)}</textarea>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+            <button onclick="_testConditions('entryCondCode')" style="padding:5px 14px;background:#1a2a1a;border:1px solid #2a4a2a;color:#00e676;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
+            <span id="entryCondTestResult" style="font-size:11px;"></span>
+          </div>
+          <div style="margin-top:10px;padding:10px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;">
+            <div style="color:#58a6ff;font-size:10px;font-weight:600;margin-bottom:6px;">EXAMPLES (click to use)</div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="rsi14 < 70 AND htf_bias == bullish AND f_trending == true" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#56d364;">Numeric + String + Bool:</span> rsi14 < 70 AND htf_bias == bullish AND f_trending == true
+              </span>
+              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="rsi14 between 30 70 AND session_bucket != midday_chop" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#d29922;">Between:</span> rsi14 between 30 70 AND session_bucket != midday_chop
+              </span>
+              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="bull_confluence >= 3 AND price_above_ema20 == true AND stoch_in_ob == false" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#f85149;">Confluence + Booleans:</span> bull_confluence >= 3 AND price_above_ema20 == true AND stoch_in_ob == false
+              </span>
+              <span onclick="_setCondCode('entryCondCode', this.dataset.code)" data-code="adx_trending == true AND macd_bull == true AND bar_time_hhmm >= 930 AND bar_time_hhmm <= 1500" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#79c0ff;">Session + Trend:</span> adx_trending == true AND macd_bull == true AND bar_time_hhmm >= 930 AND bar_time_hhmm <= 1500
+              </span>
+            </div>
+          </div>
         </div>
         ${_referencePanel()}
       </div>
@@ -1791,6 +1812,27 @@ REASON: [one concise sentence]`;
         <div style="flex:1;">
           <label style="display:block;color:#ff1744;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Exit Conditions</label>
           <textarea id="exitCondCode" style="display:block;width:100%;min-height:120px;padding:10px 12px;font-family:'Consolas',monospace;font-size:13px;line-height:1.5;background:#0d0d0d;border:1px solid #333;color:#e6edf3;border-radius:6px;resize:vertical;box-sizing:border-box;" placeholder="exit_score >= 3 AND ticks_pnl > 20&#10;OR zlema_flipped_bear == true">${_conditionsToText(wizData.exit_conditions)}</textarea>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+            <button onclick="_testConditions('exitCondCode')" style="padding:5px 14px;background:#3d0a0a;border:1px solid #4a2a2a;color:#ff1744;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;">Test Against Live Data</button>
+            <span id="exitCondTestResult" style="font-size:11px;"></span>
+          </div>
+          <div style="margin-top:10px;padding:10px;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;">
+            <div style="color:#58a6ff;font-size:10px;font-weight:600;margin-bottom:6px;">EXAMPLES (click to use)</div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="exit_score >= 3 AND ticks_pnl > 20" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#56d364;">Score + P&L:</span> exit_score >= 3 AND ticks_pnl > 20
+              </span>
+              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="ticks_pnl between -100 -50 OR bars_in_trade > 30" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#d29922;">Between + Time:</span> ticks_pnl between -100 -50 OR bars_in_trade > 30
+              </span>
+              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="f_zlema_trend_bear == true AND stoch_in_ob == true AND ticks_pnl > 10" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#f85149;">Trend Flip:</span> f_zlema_trend_bear == true AND stoch_in_ob == true AND ticks_pnl > 10
+              </span>
+              <span onclick="_setCondCode('exitCondCode', this.dataset.code)" data-code="dollar_pnl > 50 OR ticks_pnl < -80" style="color:#8b949e;font-size:11px;font-family:monospace;cursor:pointer;padding:3px 6px;border-radius:3px;background:#111;">
+                <span style="color:#79c0ff;">Profit Target / Stop:</span> dollar_pnl > 50 OR ticks_pnl < -80
+              </span>
+            </div>
+          </div>
         </div>
         ${_referencePanel({label:'Position', color:'#f85149', items:['exit_score','ticks_pnl','dollar_pnl','bars_in_trade']})}
       </div>
@@ -1836,6 +1878,50 @@ REASON: [one concise sentence]`;
       _lastFocusedTextarea = e.target;
     }
   });
+
+  function _setCondCode(textareaId, code) {
+    const ta = document.getElementById(textareaId);
+    if (ta) { ta.value = code; ta.focus(); }
+  }
+
+  async function _testConditions(textareaId) {
+    const ta = document.getElementById(textareaId);
+    const resultEl = document.getElementById(textareaId.replace('Code', 'TestResult'));
+    if (!ta || !resultEl) return;
+
+    const code = ta.value.trim();
+    if (!code) { resultEl.innerHTML = '<span style="color:#d29922;">Enter conditions first</span>'; return; }
+
+    resultEl.innerHTML = '<span style="color:var(--text-dim);">Testing...</span>';
+
+    try {
+      // Get selected instrument
+      const inst = wizData.instrument || 'MNQ';
+      const resp = await fetch(`${BASE}/webhook/ai/test-conditions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conditions_text: code, instrument: inst })
+      });
+      const data = await resp.json();
+      if (data.error) {
+        resultEl.innerHTML = `<span style="color:#ff1744;">Error: ${data.error}</span>`;
+      } else {
+        const passColor = data.result ? '#00e676' : '#ff1744';
+        const passText = data.result ? 'PASS' : 'FAIL';
+        let details = `<span style="color:${passColor};font-weight:600;">${passText}</span>`;
+        if (data.matched_fields) {
+          details += `<span style="color:var(--text-dim);margin-left:6px;">(${data.matched_fields.join(', ')})</span>`;
+        }
+        if (data.sample_values) {
+          const samples = Object.entries(data.sample_values).map(([k,v]) => `${k}=${v}`).join(', ');
+          details += `<br><span style="color:var(--text-dim);font-size:10px;">Current: ${samples}</span>`;
+        }
+        resultEl.innerHTML = details;
+      }
+    } catch (e) {
+      resultEl.innerHTML = `<span style="color:#ff1744;">Failed: ${e.message}</span>`;
+    }
+  }
 
   function _insertAtCursor(text) {
     const ta = _lastFocusedTextarea || document.getElementById('entryCondCode');

@@ -847,6 +847,62 @@ async def ai_bots_list():
     return ai_gate.list_bots()
 
 
+@app.post("/webhook/ai/test-conditions")
+async def ai_test_conditions(request: Request):
+    """Test condition expression against current live indicator values."""
+    data = await request.json()
+    conditions_text = data.get("conditions_text", "")
+    instrument = data.get("instrument", "MNQ")
+
+    if not conditions_text:
+        return {"error": "No conditions provided"}
+
+    try:
+        # Parse text to rule tree
+        import condition_engine
+        rules = condition_engine.parse_text_conditions(conditions_text)
+        if not rules:
+            return {"error": "Could not parse conditions"}
+
+        # Get current indicator values
+        import indicator_engine
+        context = indicator_engine.compute_all_indicators(instrument)
+        if not context:
+            return {"error": f"No bar data available for {instrument}"}
+
+        # Evaluate
+        result = condition_engine.evaluate_conditions(rules, context)
+
+        # Extract which fields were referenced and their current values
+        referenced_fields = _extract_fields(rules)
+        sample_values = {f: context.get(f) for f in referenced_fields if f in context}
+
+        # Round floats for readability
+        for k, v in sample_values.items():
+            if isinstance(v, float):
+                sample_values[k] = round(v, 2)
+
+        return {
+            "result": result,
+            "matched_fields": referenced_fields,
+            "sample_values": sample_values,
+            "parsed_rules": rules,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _extract_fields(rules: dict) -> list:
+    """Extract all field names from a rule tree."""
+    fields = []
+    if "field" in rules:
+        fields.append(rules["field"])
+    if "conditions" in rules:
+        for c in rules["conditions"]:
+            fields.extend(_extract_fields(c))
+    return fields
+
+
 @app.post("/webhook/ai/bots")
 async def ai_bots_create(request: Request, _user: dict = Depends(verify_bearer)):
     data = await request.json()
