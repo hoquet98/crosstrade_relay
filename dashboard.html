@@ -1749,9 +1749,9 @@ REASON: [one concise sentence]`;
   function renderStepEntryConditions(body) {
     const rows = (wizData.entry_conditions || []).map((c, i) => _conditionRow(c, i, 'entry')).join('');
     body.innerHTML = `
-      <div style="display:flex;gap:8px;margin-bottom:10px;">
-        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormEntry').style.display='block';el('condCodeEntry').style.display='none';" style="font-size:11px;">Form View</button>
-        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormEntry').style.display='none';el('condCodeEntry').style.display='flex';" style="font-size:11px;">Code View</button>
+      <div style="display:flex;gap:2px;margin-bottom:10px;background:#111;border-radius:6px;padding:2px;">
+        <button id="entryFormBtn" onclick="_switchCondView('entry','form')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:var(--accent);color:#fff;">Form View</button>
+        <button id="entryCodeBtn" onclick="_switchCondView('entry','code')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:transparent;color:var(--text-dim);">Code View</button>
       </div>
       <div id="condFormEntry">
         <label style="display:block;color:#00e676;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Entry Conditions</label>
@@ -1803,9 +1803,9 @@ REASON: [one concise sentence]`;
   function renderStepExitConditions(body) {
     const rows = (wizData.exit_conditions || []).map((c, i) => _conditionRow(c, i, 'exit')).join('');
     body.innerHTML = `
-      <div style="display:flex;gap:8px;margin-bottom:10px;">
-        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormExit').style.display='block';el('condCodeExit').style.display='none';" style="font-size:11px;">Form View</button>
-        <button class="wiz-btn wiz-btn-secondary" onclick="el('condFormExit').style.display='none';el('condCodeExit').style.display='flex';" style="font-size:11px;">Code View</button>
+      <div style="display:flex;gap:2px;margin-bottom:10px;background:#111;border-radius:6px;padding:2px;">
+        <button id="exitFormBtn" onclick="_switchCondView('exit','form')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:var(--accent);color:#fff;">Form View</button>
+        <button id="exitCodeBtn" onclick="_switchCondView('exit','code')" style="flex:1;padding:6px 12px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:transparent;color:var(--text-dim);">Code View</button>
       </div>
       <div id="condFormExit">
         <label style="display:block;color:#ff1744;font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;">Exit Conditions</label>
@@ -1886,6 +1886,25 @@ REASON: [one concise sentence]`;
       _lastFocusedTextarea = e.target;
     }
   });
+
+  function _switchCondView(type, view) {
+    const prefix = type === 'entry' ? 'Entry' : 'Exit';
+    const formEl = el('condForm' + prefix);
+    const codeEl = el('condCode' + prefix);
+    const formBtn = el(type + 'FormBtn');
+    const codeBtn = el(type + 'CodeBtn');
+    if (view === 'form') {
+      if (formEl) formEl.style.display = 'block';
+      if (codeEl) codeEl.style.display = 'none';
+      if (formBtn) { formBtn.style.background = 'var(--accent)'; formBtn.style.color = '#fff'; }
+      if (codeBtn) { codeBtn.style.background = 'transparent'; codeBtn.style.color = 'var(--text-dim)'; }
+    } else {
+      if (formEl) formEl.style.display = 'none';
+      if (codeEl) codeEl.style.display = 'flex';
+      if (formBtn) { formBtn.style.background = 'transparent'; formBtn.style.color = 'var(--text-dim)'; }
+      if (codeBtn) { codeBtn.style.background = 'var(--accent)'; codeBtn.style.color = '#fff'; }
+    }
+  }
 
   async function _testFormConditions(type) {
     const resultEl = el(type + 'FormTestResult');
