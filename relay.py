@@ -616,6 +616,70 @@ async def nt_tables(request: Request, db_param: str = None):
 # AI GATE ROUTES (thin wrappers — logic lives in ai_gate.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TASTYTRADE OAUTH CALLBACK
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/oauth/callback")
+async def oauth_callback(code: str = None, error: str = None):
+    """OAuth2 callback — exchanges authorization code for refresh token."""
+    if error:
+        return JSONResponse(content={"error": error})
+    if not code:
+        return JSONResponse(content={"error": "No authorization code received"})
+
+    # Exchange code for tokens
+    client_id = db.get_setting("tastytrade_client_id")
+    client_secret = db.get_setting("tastytrade_client_secret")
+
+    if not client_id or not client_secret:
+        return JSONResponse(content={"error": "Tastytrade credentials not configured in Settings"})
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post("https://api.tastyworks.com/oauth/token", json={
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": f"http://217.77.0.232/oauth/callback",
+            })
+
+        if resp.status_code == 200:
+            data = resp.json()
+            refresh_token = data.get("refresh_token", "")
+            access_token = data.get("access_token", "")
+
+            # Save refresh token to settings
+            if refresh_token:
+                db.set_setting("tastytrade_refresh_token", refresh_token)
+                logger.info(f"Tastytrade OAuth: refresh token saved successfully")
+
+            return JSONResponse(content={
+                "status": "ok",
+                "message": "Tastytrade authorized! Refresh token saved.",
+                "access_token_preview": access_token[:20] + "..." if access_token else "none",
+                "refresh_token_saved": bool(refresh_token),
+            })
+        else:
+            return JSONResponse(content={"error": f"Token exchange failed: {resp.status_code}", "body": resp.text[:500]})
+
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)})
+
+
+@app.get("/oauth/tastytrade/start")
+async def oauth_tastytrade_start():
+    """Redirect user to Tastytrade authorization page."""
+    client_id = db.get_setting("tastytrade_client_id")
+    if not client_id:
+        return JSONResponse(content={"error": "Tastytrade client_id not configured"})
+    redirect_uri = "http://217.77.0.232/oauth/callback"
+    auth_url = f"https://trade.tastytrade.com/oauth/authorize?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope=read"
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=auth_url)
+
+
 _data_feed_count: dict[str, int] = {}
 _data_feed_last_log: float = 0
 
