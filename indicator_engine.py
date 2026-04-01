@@ -575,6 +575,51 @@ def compute_all_indicators(instrument: str) -> dict:
     except Exception as e:
         logger.debug(f"Institutional gate filter error: {e}")
 
+    # ══════════════════════════════════════════════════════════════════════
+    # WHALE PRESSURE INDICATOR
+    # ══════════════════════════════════════════════════════════════════════
+
+    try:
+        wp, raw_wp, wp_zone, wp_conviction, wp_momentum = ind.whale_pressure(
+            open_, high, low, close,
+            atr_period=14, smooth_period=3, range_cap=3.0,
+            strong_threshold=60.0, weak_threshold=25.0
+        )
+
+        result["whale_pressure"] = round(float(wp.iloc[-1]), 1) if not np.isnan(wp.iloc[-1]) else 0
+        result["whale_pressure_raw"] = round(float(raw_wp.iloc[-1]), 1) if not np.isnan(raw_wp.iloc[-1]) else 0
+        result["whale_zone"] = int(wp_zone.iloc[-1])  # -2, -1, 0, +1, +2
+        result["whale_conviction"] = int(wp_conviction.iloc[-1])
+        result["whale_momentum"] = round(float(wp_momentum.iloc[-1]), 2) if not np.isnan(wp_momentum.iloc[-1]) else 0
+
+        # Derived booleans for conditions
+        result["whale_buying"] = result["whale_zone"] >= 1
+        result["whale_selling"] = result["whale_zone"] <= -1
+        result["whale_strong_buy"] = result["whale_zone"] == 2
+        result["whale_strong_sell"] = result["whale_zone"] == -2
+        result["whale_neutral"] = result["whale_zone"] == 0
+
+        # Zone flips (for exit scoring)
+        if len(wp_zone) >= 2:
+            prev_zone = int(wp_zone.iloc[-2])
+            curr_zone = int(wp_zone.iloc[-1])
+            result["whale_flipped_bull"] = curr_zone >= 1 and prev_zone <= 0
+            result["whale_flipped_bear"] = curr_zone <= -1 and prev_zone >= 0
+            result["whale_went_neutral"] = curr_zone == 0 and prev_zone != 0
+        else:
+            result["whale_flipped_bull"] = False
+            result["whale_flipped_bear"] = False
+            result["whale_went_neutral"] = False
+
+        # Early warning (raw pressure spike before confirmed zone change)
+        early_buy_th = 25.0 * 0.7  # weak_threshold * early_mult
+        early_sell_th = -25.0 * 0.7
+        result["whale_early_buy"] = result["whale_pressure_raw"] >= early_buy_th and result["whale_zone"] <= 0
+        result["whale_early_sell"] = result["whale_pressure_raw"] <= early_sell_th and result["whale_zone"] >= 0
+
+    except Exception as e:
+        logger.debug(f"Whale pressure computation error: {e}")
+
     return result
 
 

@@ -1762,6 +1762,7 @@ REASON: [one concise sentence]`;
       {label:'Trend', color:'#f85149', items:['htf_bias','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','price_above_ema20','price_above_ema50','supertrend_bull','adx_trending','macd_bull','not_choppy']},
       {label:'Volatility', color:'#56d364', items:['atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_squeeze_off','er_val']},
       {label:'Session', color:'#79c0ff', items:['session_bucket','day_of_week','bar_time_hhmm','mins_to_maintenance']},
+      {label:'Whale', color:'#e040fb', items:['whale_pressure','whale_zone','whale_buying','whale_selling','whale_strong_buy','whale_strong_sell','whale_neutral','whale_flipped_bull','whale_flipped_bear','whale_went_neutral','whale_early_buy','whale_early_sell','whale_conviction','whale_momentum']},
       {label:'CVD', color:'#ff9800', items:['cvd_trend','cvd_divergence','cvd_1m_delta','cvd_5m_delta']},
     ];
     if (extraFields) groups.push(extraFields);
@@ -1885,7 +1886,7 @@ REASON: [one concise sentence]`;
     const value1 = Array.isArray(cond?.value) ? cond.value[0] ?? '' : value;
     const logic = cond?.logic || 'AND';
     const isBetween = op === 'between';
-    const fields = ['rsi14','htf_bias','session_bucket','bull_confluence','bear_confluence','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','f_squeeze_off','wt1','er_val','price_above_ema20','price_above_ema50','cvd_trend','cvd_divergence','bar_time_hhmm','day_of_week','mins_to_maintenance','exit_score','ticks_pnl','dollar_pnl','bars_in_trade','adx14','adx_trending','macd_bull','supertrend_bull','not_choppy','choppiness','williams_r','roc10','mfi14','dema20','tema20','linreg_slope20','squeeze_type','squeeze_ideal_bull','squeeze_ideal_bear','squeeze_gate_ok','vol_percentile','vol_regime_adverse','vwap_price','vwap_above','vwap_sigma_dist','vwap_long_ok','vwap_short_ok','bar_delta','delta_bull','delta_bear','rvol_ok'];
+    const fields = ['rsi14','htf_bias','session_bucket','bull_confluence','bear_confluence','stoch_rsi_k','stoch_in_ob','stoch_in_os','cci20','atr14','bb_pctb','vol_ratio','bar_body_pct','bar_is_bullish','f_zlema_trend_bull','f_zlema_trend_bear','f_trending','f_squeeze_off','wt1','er_val','price_above_ema20','price_above_ema50','cvd_trend','cvd_divergence','bar_time_hhmm','day_of_week','mins_to_maintenance','exit_score','ticks_pnl','dollar_pnl','bars_in_trade','adx14','adx_trending','macd_bull','supertrend_bull','not_choppy','choppiness','williams_r','roc10','mfi14','dema20','tema20','linreg_slope20','squeeze_type','squeeze_ideal_bull','squeeze_ideal_bear','squeeze_gate_ok','vol_percentile','vol_regime_adverse','vwap_price','vwap_above','vwap_sigma_dist','vwap_long_ok','vwap_short_ok','bar_delta','delta_bull','delta_bear','rvol_ok','whale_pressure','whale_zone','whale_buying','whale_selling','whale_strong_buy','whale_strong_sell','whale_neutral','whale_flipped_bull','whale_flipped_bear','whale_went_neutral','whale_early_buy','whale_early_sell','whale_conviction','whale_momentum'];
     const ops = ['<','<=','>','>=','==','!=','between','in'];
     const rowId = `${type}-${index}`;
     return `<div style="display:flex;gap:4px;align-items:center;margin-top:4px;" data-cond-row="${rowId}">
@@ -2280,7 +2281,7 @@ REASON: [one concise sentence]`;
       groups[ind.category].push(ind);
     });
 
-    const categoryOrder = ['signal', 'institutional_gate', 'layer', 'oscillator', 'trend', 'volatility', 'candle', 'session', 'cvd'];
+    const categoryOrder = ['signal', 'institutional_gate', 'whale', 'layer', 'oscillator', 'trend', 'volatility', 'candle', 'session', 'cvd'];
     // Include any categories not in the predefined order (catch-all)
     const sortedCategories = categoryOrder.filter(c => groups[c]);
     Object.keys(groups).forEach(c => { if (!sortedCategories.includes(c)) sortedCategories.push(c); });

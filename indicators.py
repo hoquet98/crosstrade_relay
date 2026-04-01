@@ -1375,3 +1375,114 @@ def relative_vigor_index(open_: pd.Series, high: pd.Series,
     signal_line = (rvi_line + 2 * rvi_line.shift(1) + 2 * rvi_line.shift(2) + rvi_line.shift(3)) / 6
 
     return rvi_line, signal_line
+
+
+# ---------------------------------------------------------------------------
+# Whale Pressure Indicator (WPI)
+# ---------------------------------------------------------------------------
+
+def whale_pressure(open_: pd.Series, high: pd.Series, low: pd.Series,
+                   close: pd.Series, atr_period: int = 14,
+                   smooth_period: int = 3, range_cap: float = 3.0,
+                   strong_threshold: float = 60.0,
+                   weak_threshold: float = 25.0):
+    """Whale Pressure Indicator — detects institutional accumulation/distribution.
+
+    Combines Close Location Value (CLV), body ratio, and ATR-normalized
+    range factor into a single pressure reading (-100 to +100).
+
+    CLV measures where price closed within the bar's range. Body ratio
+    measures conviction (full-body candles = strong). Range factor
+    amplifies signals on wide bars (relative to ATR).
+
+    Zones:
+        +2 = Strong Buy  (pressure >= strong_threshold)
+        +1 = Buy          (pressure >= weak_threshold)
+         0 = Neutral
+        -1 = Sell          (pressure <= -weak_threshold)
+        -2 = Strong Sell  (pressure <= -strong_threshold)
+
+    Parameters
+    ----------
+    open_, high, low, close : pd.Series
+    atr_period : int
+        ATR lookback for range normalization. Default 14.
+    smooth_period : int
+        EMA smoothing for confirmed signal. Default 3.
+    range_cap : float
+        Max range factor (prevents outlier bars from dominating). Default 3.0.
+    strong_threshold : float
+        Whale pressure value for strong zone. Default 60.
+    weak_threshold : float
+        Whale pressure value for weak zone. Default 25.
+
+    Returns
+    -------
+    tuple of (pd.Series, pd.Series, pd.Series, pd.Series, pd.Series)
+        - wp: Smoothed whale pressure (-100 to +100)
+        - raw_wp: Raw (unsmoothed) pressure (-100 to +100)
+        - zone: Zone classification (-2, -1, 0, +1, +2)
+        - conviction: Consecutive bars in same direction (+ for buy, - for sell)
+        - momentum: Rate of change of pressure (wp - wp[1])
+    """
+    bar_range = high - low
+    clv = pd.Series(
+        np.where(bar_range > 0, (2.0 * close - low - high) / bar_range, 0.0),
+        index=close.index
+    )
+
+    body = (close - open_).abs()
+    body_ratio = pd.Series(
+        np.where(bar_range > 0, body / bar_range, 0.0),
+        index=close.index
+    )
+
+    atr_val = atr(high, low, close, atr_period)
+    range_factor = pd.Series(
+        np.where(atr_val > 0, np.minimum(bar_range / atr_val, range_cap), 1.0),
+        index=close.index
+    )
+
+    raw_pressure = clv * body_ratio * range_factor
+    raw_wp = (raw_pressure * 100.0).clip(-100, 100)
+
+    # Smoothed pressure (confirmed signal)
+    wp = ema(raw_pressure, smooth_period) * 100.0
+    wp = wp.clip(-100, 100)
+
+    # Zone detection
+    zone_vals = np.zeros(len(wp))
+    wp_arr = wp.values
+    for i in range(len(wp_arr)):
+        v = wp_arr[i]
+        if np.isnan(v):
+            zone_vals[i] = 0
+        elif v >= strong_threshold:
+            zone_vals[i] = 2
+        elif v >= weak_threshold:
+            zone_vals[i] = 1
+        elif v <= -strong_threshold:
+            zone_vals[i] = -2
+        elif v <= -weak_threshold:
+            zone_vals[i] = -1
+        else:
+            zone_vals[i] = 0
+    zone = pd.Series(zone_vals, index=close.index)
+
+    # Conviction counter (consecutive bars in same direction)
+    conv_vals = np.zeros(len(wp))
+    for i in range(1, len(wp_arr)):
+        if np.isnan(wp_arr[i]):
+            conv_vals[i] = 0
+        elif wp_arr[i] > 0:
+            conv_vals[i] = max(conv_vals[i - 1], 0) + 1
+        elif wp_arr[i] < 0:
+            conv_vals[i] = min(conv_vals[i - 1], 0) - 1
+        else:
+            conv_vals[i] = 0
+    conviction = pd.Series(conv_vals, index=close.index)
+
+    # Momentum
+    momentum = wp - wp.shift(1)
+
+    return wp, raw_wp, zone, conviction, momentum
