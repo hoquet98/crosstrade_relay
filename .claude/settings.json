@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''ai_gate.py'', doraise=True\\); print\\(''ai_gate.py OK''\\)\")",
+      "Bash(wc -l c:/Users/hoque/crosstrade_relay/*.py)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\hoque\\ai-gate"
+    ]
+  }
+}
