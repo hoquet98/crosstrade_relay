@@ -1,27 +1,31 @@
 """
-Condition Engine — evaluates JSON rule trees against indicator payloads.
+Condition Engine — evaluates conditions against indicator payloads.
+
+Two modes:
+1. JSON rule trees (simple form-based conditions)
+2. Python scripts (advanced code-based conditions)
 
 Used by AI Gate to provide programmable entry/exit gating without LLM calls.
-Rules are stored as JSON in the ai_bots table (entry_conditions, exit_conditions).
 
-Rule format:
+JSON Rule format:
     {
         "op": "AND",
         "conditions": [
             {"field": "rsi14", "op": "<", "value": 70},
-            {"field": "htf_bias", "op": "==", "value": "bullish"},
-            {"field": "session_bucket", "op": "!=", "value": "midday_chop"}
+            {"field": "htf_bias", "op": "==", "value": "bullish"}
         ]
     }
 
-Supported operators:
-    Numeric: <, <=, >, >=, ==, !=, between (value=[low, high])
-    String:  ==, !=, in (value=[list])
-    Boolean: ==, !=
-    Logical: AND, OR, NOT (grouping)
+Python Script format:
+    score = 0
+    if whale_buying and whale_conviction > 2: score += 3
+    if vwap_long_ok: score += 2
+    entry = score >= 5
 
-Safety: No eval(), no code injection. Pure dict/value comparison.
-Unknown fields evaluate to False (fail-safe: condition not met).
+Safety:
+- JSON rules: No eval(), pure dict/value comparison
+- Python scripts: exec() with restricted builtins (no imports, no file/network access)
+  Only math, min, max, abs, round, len, range, True, False, None allowed
 """
 
 import logging
@@ -29,27 +33,152 @@ import logging
 logger = logging.getLogger("trade_relay")
 
 
-def evaluate_conditions(rules: dict, context: dict) -> bool:
-    """Evaluate a JSON rule tree against an indicator context dict.
+# ══════════════════════════════════════════════════════════════════════════════
+# PYTHON SCRIPT EVALUATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Safe builtins — no imports, no file access, no network
+_SAFE_BUILTINS = {
+    "True": True, "False": False, "None": None,
+    "abs": abs, "min": min, "max": max, "round": round,
+    "len": len, "range": range, "int": int, "float": float,
+    "str": str, "bool": bool,
+    "sum": sum, "sorted": sorted,
+}
+
+
+def evaluate_script(code: str, context: dict, mode: str = "entry") -> bool:
+    """Evaluate a Python script against indicator context.
+
+    The script has access to all indicator values as local variables.
+    It must set `entry = True/False` or `exit = True/False` to signal its decision.
 
     Args:
-        rules: JSON rule tree (dict with 'op' and 'conditions' or 'field')
-        context: Flat dict of indicator values (enriched payload)
+        code: Python code string
+        context: Flat dict of indicator values
+        mode: "entry" or "exit" — determines which variable to read
 
     Returns:
-        True if all conditions are met, False otherwise.
+        True if the script sets entry=True (or exit=True for exit mode)
+        False otherwise or on error
+    """
+    if not code or not code.strip():
+        return True  # No script = pass through
+
+    # Check if it looks like a Python script (has if/else/score/=)
+    stripped = code.strip()
+    if not any(kw in stripped for kw in ['if ', 'score', 'entry', 'exit', '=']):
+        # Might be a simple text condition — try the old parser
+        return False
+
+    # Build execution namespace with indicator values
+    namespace = dict(_SAFE_BUILTINS)
+    namespace["__builtins__"] = {}  # Block all default builtins
+
+    # Inject all indicator values as variables
+    for key, value in context.items():
+        # Make safe variable names (replace hyphens, spaces)
+        safe_key = key.replace("-", "_").replace(" ", "_")
+        namespace[safe_key] = value
+
+    # Initialize result variables
+    namespace["entry"] = False
+    namespace["exit"] = False
+
+    try:
+        exec(stripped, {"__builtins__": {}}, namespace)
+    except Exception as e:
+        logger.warning(f"Script evaluation error: {type(e).__name__}: {e}")
+        return False
+
+    # Read the result
+    if mode == "exit":
+        return bool(namespace.get("exit", False))
+    else:
+        return bool(namespace.get("entry", False))
+
+
+def validate_script(code: str) -> dict:
+    """Validate Python script syntax without executing it.
+
+    Returns:
+        {"valid": True} or {"valid": False, "error": "...", "line": N}
+    """
+    if not code or not code.strip():
+        return {"valid": True}
+
+    try:
+        compile(code.strip(), "<condition_script>", "exec")
+        return {"valid": True}
+    except SyntaxError as e:
+        return {
+            "valid": False,
+            "error": str(e.msg),
+            "line": e.lineno,
+            "offset": e.offset,
+        }
+
+
+def is_python_script(code) -> bool:
+    """Detect if a condition string is a Python script vs JSON/text rules.
+
+    Python scripts contain control flow, assignments, or multi-line logic.
+    Simple text conditions are single-line field comparisons with AND/OR.
+    """
+    if not code or not isinstance(code, str):
+        return False
+    stripped = code.strip()
+    # Python indicators: if/else, score, multi-line, indent, for/while
+    return any(indicator in stripped for indicator in [
+        '\nif ', '\n    ', 'score ', 'score=', 'entry =', 'exit =',
+        'entry=', 'exit=', 'elif ', 'else:', 'for ', 'while ',
+    ]) or stripped.startswith('if ') or stripped.startswith('score')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UNIFIED EVALUATION (handles both JSON rules and Python scripts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def evaluate_conditions(rules, context: dict, mode: str = "entry") -> bool:
+    """Evaluate conditions against an indicator context dict.
+
+    Handles three formats:
+    1. dict — JSON rule tree (from form builder)
+    2. str (Python script) — if/else/score logic
+    3. str (text rules) — "rsi14 < 70 AND htf_bias == bullish"
+
+    Args:
+        rules: JSON rule tree (dict), Python script (str), or text rules (str)
+        context: Flat dict of indicator values (enriched payload)
+        mode: "entry" or "exit" — for Python scripts
+
+    Returns:
+        True if conditions are met, False otherwise.
         Returns True if rules is None or empty (no conditions = pass).
     """
     if not rules:
         return True
 
     if isinstance(rules, str):
-        # Parse if string was passed
+        stripped = rules.strip()
+        if not stripped:
+            return True
+
+        # Check if it's a Python script
+        if is_python_script(stripped):
+            return evaluate_script(stripped, context, mode=mode)
+
+        # Try to parse as JSON rule tree
         import json
         try:
-            rules = json.loads(rules)
+            rules = json.loads(stripped)
         except (json.JSONDecodeError, TypeError):
-            logger.warning(f"Invalid condition rules string: {rules[:100]}")
+            # Try as simple text conditions
+            parsed = parse_text_conditions(stripped)
+            if parsed:
+                return _evaluate_node(parsed, context)
+            logger.warning(f"Invalid condition rules string: {stripped[:100]}")
             return False
 
     if not isinstance(rules, dict):

@@ -2093,7 +2093,7 @@ async def _handle_manage(payload: dict, body_text: str, position: dict,
     if exit_conditions:
         exit_context = {**payload, "ticks_pnl": ticks_pnl, "dollar_pnl": dollar_pnl,
                         "exit_score": exit_score, "bars_in_trade": bar_count}
-        if condition_engine.evaluate_conditions(exit_conditions, exit_context):
+        if condition_engine.evaluate_conditions(exit_conditions, exit_context, mode="exit"):
             if gate_mode == "conditions_only":
                 reason = f"Conditional exit: conditions met (score={exit_score}, pnl={ticks_pnl:.1f}t)"
                 await _force_close(position, current_price, reason, payload)

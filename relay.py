@@ -929,31 +929,56 @@ async def ai_live_indicators(instrument: str = "MNQ"):
     return {k: v for k, v in context.items() if k not in skip}
 
 
+@app.post("/webhook/ai/validate-script")
+async def ai_validate_script(request: Request):
+    """Validate Python condition script syntax."""
+    data = await request.json()
+    code = data.get("code", "")
+    import condition_engine
+    return condition_engine.validate_script(code)
+
+
 @app.post("/webhook/ai/test-conditions")
 async def ai_test_conditions(request: Request):
     """Test condition expression against current live indicator values."""
     data = await request.json()
     conditions_text = data.get("conditions_text", "")
     instrument = data.get("instrument", "MNQ")
+    mode = data.get("mode", "entry")
 
     if not conditions_text:
         return {"error": "No conditions provided"}
 
     try:
-        # Parse text to rule tree
         import condition_engine
-        rules = condition_engine.parse_text_conditions(conditions_text)
-        if not rules:
-            return {"error": "Could not parse conditions"}
+        import indicator_engine
 
         # Get current indicator values
-        import indicator_engine
         context = indicator_engine.compute_all_indicators(instrument)
         if not context:
             return {"error": f"No bar data available for {instrument}"}
 
-        # Evaluate
-        result = condition_engine.evaluate_conditions(rules, context)
+        # Add exit-only fields for testing exit conditions
+        context.setdefault("ticks_pnl", 0)
+        context.setdefault("dollar_pnl", 0)
+        context.setdefault("exit_score", 0)
+        context.setdefault("bars_in_trade", 0)
+
+        # Check if Python script
+        is_script = condition_engine.is_python_script(conditions_text)
+
+        if is_script:
+            # Validate syntax first
+            validation = condition_engine.validate_script(conditions_text)
+            if not validation.get("valid"):
+                return {"error": f"Syntax error line {validation.get('line')}: {validation.get('error')}"}
+            result = condition_engine.evaluate_script(conditions_text, context, mode=mode)
+        else:
+            # Simple text conditions
+            rules = condition_engine.parse_text_conditions(conditions_text)
+            if not rules:
+                return {"error": "Could not parse conditions"}
+            result = condition_engine.evaluate_conditions(rules, context)
 
         # Extract which fields were referenced and their current values
         referenced_fields = _extract_fields(rules)
